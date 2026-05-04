@@ -1,0 +1,26 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Local/private investment data
+data/*.sqlite
+data/*.sqlite-*
+data/*.tmp
+data/raw/*
+data/processed/*
+data/indexes/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/indexes/.gitkeep
+
+# Local secrets
+.env
+.env.*
