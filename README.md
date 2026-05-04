@@ -29,15 +29,15 @@ python3 scripts/demo_analysis.py
 Aanbevolen lokaal gebruik:
 
 ```bash
-./scripts/br demo
+/bin/sh scripts/demo
 ```
 
 Losse stappen kunnen ook:
 
 ```bash
-./scripts/br init-db
-./scripts/br demo-seed
-./scripts/br analyze DEMO
+/bin/sh scripts/br init-db
+/bin/sh scripts/br demo-seed
+/bin/sh scripts/br analyze DEMO
 ```
 
 De lokale database komt standaard in:
