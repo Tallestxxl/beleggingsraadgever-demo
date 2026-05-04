@@ -10,8 +10,14 @@ from .storage import SQLiteRepository
 IMPORTS_DIR = Path(__file__).resolve().parents[2] / "data" / "imports"
 
 
+def seed_curated_snapshots(repository: SQLiteRepository) -> None:
+    """Load all curated company snapshots from the imports folder."""
+
+    for path in sorted(IMPORTS_DIR.glob("*.json")):
+        import_company_snapshot(repository, path)
+
+
 def seed_besi(repository: SQLiteRepository) -> None:
     """Load the curated BESI v1 snapshot into the local database."""
 
     import_company_snapshot(repository, IMPORTS_DIR / "besi.json")
-

@@ -1,0 +1,230 @@
+{
+  "symbol": "ASML",
+  "financial_snapshot": {
+    "period_end": "2026-03-29",
+    "period_type": "TTM",
+    "revenue": 33692700000,
+    "gross_margin": 0.526,
+    "operating_margin": 0.348,
+    "net_margin": 0.297,
+    "free_cash_flow": 8970500000,
+    "debt": 2705600000,
+    "cash": 8376300000,
+    "shares_outstanding": 385400000,
+    "dividend_per_share": 7.5,
+    "buyback_value": 1000000000
+  },
+  "market_snapshot": {
+    "as_of": "2026-04-30",
+    "close_price": 1222.4,
+    "currency": "EUR",
+    "pe_ratio": 47.27,
+    "ev_ebitda": 35.57,
+    "fcf_yield": 0.0191,
+    "dividend_yield": 0.0061,
+    "momentum_12m": 1.0076,
+    "volatility_1y": 0.42
+  },
+  "documents": [
+    {
+      "title": "ASML eerste echte snapshot",
+      "source_type": "curated_public_sources",
+      "author": "Beleggingsraadgever",
+      "publication_date": "2026-05-04",
+      "tags": ["ASML", "semiconductors", "lithografie", "EUV", "waardering", "momentum"],
+      "raw_text": "ASML snapshot samengesteld voor v1-testgebruik op basis van openbare informatie.\nDe financiele snapshot gebruikt Q2-Q4 2025 plus Q1 2026 als TTM-benadering.\n\nBelangrijkste punten:\n- ASML rapporteerde in Q1 2026 EUR 8.8 miljard omzet, 53.0% brutomarge en EUR 2.8 miljard nettowinst.\n- De TTM-omzet op basis van de laatste vier kwartalen is circa EUR 33.7 miljard.\n- De TTM operationele marge is circa 34.8% en de TTM nettomarge circa 29.7%.\n- De TTM vrije kasstroom is circa EUR 9.0 miljard, maar Q1 2026 zelf had een negatieve operationele kasstroom door werkkapitaalbewegingen.\n- ASML heeft per Q1 2026 een netto kaspositie wanneer cash plus short-term investments worden afgezet tegen long-term debt.\n- ASML verwacht voor 2026 EUR 36-40 miljard omzet en 51-53% brutomarge, waarbij vraag naar AI-infrastructuur en klantcapaciteit de kern van het groeiverhaal vormen.\n- De backlog was eind 2025 EUR 38.8 miljard en Q4 2025 net bookings waren EUR 13.2 miljard, waarvan EUR 7.4 miljard EUV.\n- De waardering is hoog: rond 30 april 2026 noteert ASML op een hoge koers-winstverhouding en lage vrije-kasstroomyield.\n- Recente koersinformatie rond 30 april 2026 wijst op sterk 12-maands momentum en een brede 52-weeks bandbreedte.\n- Managementsignaal is positief door hogere 2026 guidance in Q1, maar exportrestricties en klanttiming rond dure nieuwe systemen blijven expliciete risico's.\n\nBronnen:\n- ASML Q1 2026 press release en US GAAP financial statements, 15 april 2026.\n- ASML Q4/FY 2025 press release, 28 januari 2026.\n- StockAnalysis ASML Amsterdam ratios, 30 april 2026.\n- Investing.com ASML Amsterdam historical prices, 30 april 2026."
+    }
+  ],
+  "principles": [
+    {
+      "title": "ASML: kwaliteit kan veel dragen, maar niet alles",
+      "statement": "Bij ASML zijn marktmacht, marges en kasstroomkwaliteit uitzonderlijk, maar de waardering vraagt blijvende groei in EUV/High NA, installed base omzet en klantinvesteringen.",
+      "category": "waardering",
+      "approved": true,
+      "confidence": 1.0,
+      "source_document_title": "ASML eerste echte snapshot"
+    }
+  ],
+  "data_sources": [
+    {
+      "field_name": "revenue",
+      "value_label": "TTM omzet EUR 33.7 mrd",
+      "source_name": "ASML Q1 2026 US GAAP financial statements",
+      "source_url": "https://ourbrand.asml.com/asset/3f4235e1-ad38-4af8-a39b-de0d39cb71d1/Financial-statements-US-GAAP-Q1-2026.pdf",
+      "source_date": "2026-04-15",
+      "source_quality": "afgeleid",
+      "note": "TTM-benadering op basis van Q2-Q4 2025 plus Q1 2026."
+    },
+    {
+      "field_name": "gross_margin",
+      "value_label": "TTM brutomarge 52.6%",
+      "source_name": "ASML Q1 2026 US GAAP financial statements",
+      "source_url": "https://ourbrand.asml.com/asset/3f4235e1-ad38-4af8-a39b-de0d39cb71d1/Financial-statements-US-GAAP-Q1-2026.pdf",
+      "source_date": "2026-04-15",
+      "source_quality": "afgeleid",
+      "note": "Afgeleid uit laatste vier kwartalen brutoresultaat en omzet."
+    },
+    {
+      "field_name": "operating_margin",
+      "value_label": "TTM operationele marge 34.8%",
+      "source_name": "ASML Q1 2026 US GAAP financial statements",
+      "source_url": "https://ourbrand.asml.com/asset/3f4235e1-ad38-4af8-a39b-de0d39cb71d1/Financial-statements-US-GAAP-Q1-2026.pdf",
+      "source_date": "2026-04-15",
+      "source_quality": "afgeleid",
+      "note": "Afgeleid uit laatste vier kwartalen income from operations en omzet."
+    },
+    {
+      "field_name": "net_margin",
+      "value_label": "TTM nettomarge 29.7%",
+      "source_name": "ASML Q1 2026 US GAAP financial statements",
+      "source_url": "https://ourbrand.asml.com/asset/3f4235e1-ad38-4af8-a39b-de0d39cb71d1/Financial-statements-US-GAAP-Q1-2026.pdf",
+      "source_date": "2026-04-15",
+      "source_quality": "afgeleid",
+      "note": "Afgeleid uit laatste vier kwartalen nettowinst en omzet."
+    },
+    {
+      "field_name": "free_cash_flow",
+      "value_label": "TTM vrije kasstroom EUR 9.0 mrd",
+      "source_name": "ASML Q1 2026 US GAAP financial statements",
+      "source_url": "https://ourbrand.asml.com/asset/3f4235e1-ad38-4af8-a39b-de0d39cb71d1/Financial-statements-US-GAAP-Q1-2026.pdf",
+      "source_date": "2026-04-15",
+      "source_quality": "afgeleid",
+      "note": "TTM operationele kasstroom minus aankopen property, plant and equipment."
+    },
+    {
+      "field_name": "debt",
+      "value_label": "Long-term debt EUR 2.7 mrd",
+      "source_name": "ASML Q1 2026 US GAAP financial statements",
+      "source_url": "https://ourbrand.asml.com/asset/3f4235e1-ad38-4af8-a39b-de0d39cb71d1/Financial-statements-US-GAAP-Q1-2026.pdf",
+      "source_date": "2026-04-15",
+      "source_quality": "primair",
+      "note": "Long-term debt per 29 maart 2026."
+    },
+    {
+      "field_name": "cash",
+      "value_label": "Cash plus short-term investments EUR 8.4 mrd",
+      "source_name": "ASML Q1 2026 US GAAP financial statements",
+      "source_url": "https://ourbrand.asml.com/asset/3f4235e1-ad38-4af8-a39b-de0d39cb71d1/Financial-statements-US-GAAP-Q1-2026.pdf",
+      "source_date": "2026-04-15",
+      "source_quality": "primair",
+      "note": "Cash and cash equivalents plus short-term investments per 29 maart 2026."
+    },
+    {
+      "field_name": "shares_outstanding",
+      "value_label": "385.4 mln gewogen gemiddelde aandelen",
+      "source_name": "ASML Q1 2026 US GAAP financial statements",
+      "source_url": "https://ourbrand.asml.com/asset/3f4235e1-ad38-4af8-a39b-de0d39cb71d1/Financial-statements-US-GAAP-Q1-2026.pdf",
+      "source_date": "2026-04-15",
+      "source_quality": "primair",
+      "note": "Basic weighted average ordinary shares in Q1 2026; later vervangen door exact ultimo-aantal."
+    },
+    {
+      "field_name": "dividend_per_share",
+      "value_label": "Dividend EUR 7.50 per aandeel",
+      "source_name": "ASML Q1 2026 press release",
+      "source_url": "https://www.asml.com/en/news/press-releases/2026/q1-2026-financial-results",
+      "source_date": "2026-04-15",
+      "source_quality": "primair",
+      "note": "Totaal dividend over boekjaar 2025 zoals ASML dit wil declareren."
+    },
+    {
+      "field_name": "buyback_value",
+      "value_label": "Buybacks EUR 1.0 mrd",
+      "source_name": "ASML Q1 2026 US GAAP financial statements",
+      "source_url": "https://ourbrand.asml.com/asset/3f4235e1-ad38-4af8-a39b-de0d39cb71d1/Financial-statements-US-GAAP-Q1-2026.pdf",
+      "source_date": "2026-04-15",
+      "source_quality": "primair",
+      "note": "Purchase of treasury shares in Q1 2026."
+    },
+    {
+      "field_name": "backlog",
+      "value_label": "Backlog eind 2025 EUR 38.8 mrd",
+      "source_name": "ASML Q4/FY 2025 results",
+      "source_url": "https://www.asml.com/en/news/press-releases/2026/q4-2025-financial-results",
+      "source_date": "2026-01-28",
+      "source_quality": "primair",
+      "note": "Belangrijke context voor cyclische omzetzichtbaarheid; nog niet in score verwerkt."
+    },
+    {
+      "field_name": "bookings",
+      "value_label": "Q4 2025 net bookings EUR 13.2 mrd",
+      "source_name": "ASML Q4/FY 2025 results",
+      "source_url": "https://www.asml.com/en/news/press-releases/2026/q4-2025-financial-results",
+      "source_date": "2026-01-28",
+      "source_quality": "primair",
+      "note": "Waarvan EUR 7.4 mrd EUV; nog niet in score verwerkt."
+    },
+    {
+      "field_name": "management_signal",
+      "value_label": "2026 omzetverwachting verhoogd naar EUR 36-40 mrd",
+      "source_name": "ASML Q1 2026 press release",
+      "source_url": "https://www.asml.com/en/news/press-releases/2026/q1-2026-financial-results",
+      "source_date": "2026-04-15",
+      "source_quality": "primair",
+      "note": "Management noemt AI-infrastructuur en versnelde klantcapaciteit als vraagdrivers."
+    },
+    {
+      "field_name": "close_price",
+      "value_label": "Slotkoers EUR 1,222.40",
+      "source_name": "Investing.com ASML Amsterdam historical prices",
+      "source_url": "https://de.investing.com/equities/asml-holding-historical-data",
+      "source_date": "2026-04-30",
+      "source_quality": "marktdata",
+      "note": "Gebruikt als end-of-day koerspunt voor de v1-analyse."
+    },
+    {
+      "field_name": "pe_ratio",
+      "value_label": "Koers-winstverhouding 47.27",
+      "source_name": "StockAnalysis ASML Amsterdam ratios",
+      "source_url": "https://stockanalysis.com/quote/ams/ASML/financials/ratios/",
+      "source_date": "2026-04-30",
+      "source_quality": "marktdata",
+      "note": "Indicatieve marktwaardering; later vervangen door eigen berekening."
+    },
+    {
+      "field_name": "ev_ebitda",
+      "value_label": "EV/EBITDA 35.57",
+      "source_name": "StockAnalysis ASML Amsterdam ratios",
+      "source_url": "https://stockanalysis.com/quote/ams/ASML/financials/ratios/",
+      "source_date": "2026-04-30",
+      "source_quality": "marktdata",
+      "note": "Indicatieve marktwaardering; later vervangen door eigen berekening."
+    },
+    {
+      "field_name": "fcf_yield",
+      "value_label": "FCF-yield 1.91%",
+      "source_name": "StockAnalysis ASML Amsterdam ratios",
+      "source_url": "https://stockanalysis.com/quote/ams/ASML/financials/ratios/",
+      "source_date": "2026-04-30",
+      "source_quality": "marktdata",
+      "note": "Gebruikt voor de v1 waarderingsscore."
+    },
+    {
+      "field_name": "dividend_yield",
+      "value_label": "Dividendrendement 0.61%",
+      "source_name": "StockAnalysis ASML Amsterdam ratios",
+      "source_url": "https://stockanalysis.com/quote/ams/ASML/financials/ratios/",
+      "source_date": "2026-04-30",
+      "source_quality": "marktdata",
+      "note": "Gebruikt voor context; nog niet sterk in score verwerkt."
+    },
+    {
+      "field_name": "momentum_12m",
+      "value_label": "12-maands momentum 100.76%",
+      "source_name": "Investing.com ASML Amsterdam historical prices",
+      "source_url": "https://de.investing.com/equities/asml-holding-historical-data",
+      "source_date": "2026-04-30",
+      "source_quality": "marktdata",
+      "note": "Gebaseerd op de 1-jaars verandering die Investing.com toont."
+    },
+    {
+      "field_name": "volatility_1y",
+      "value_label": "1-jaars volatiliteit v1-inschatting 42.0%",
+      "source_name": "Beleggingsraadgever v1 risico-inschatting",
+      "source_url": "https://de.investing.com/equities/asml-holding-historical-data",
+      "source_date": "2026-05-04",
+      "source_quality": "afgeleid",
+      "note": "Voorlopige risicoparameter op basis van brede 52-weeks koersbandbreedte; later vervangen door berekening uit dagelijkse koersen."
+    }
+  ]
+}

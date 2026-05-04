@@ -13,16 +13,21 @@ from beleggingsraadgever.storage import SQLiteRepository
 
 class ImporterTests(unittest.TestCase):
     def test_import_besi_snapshot_file(self) -> None:
+        self._assert_snapshot_import("BESI", "BESI eerste echte snapshot")
+
+    def test_import_asml_snapshot_file(self) -> None:
+        self._assert_snapshot_import("ASML", "ASML eerste echte snapshot")
+
+    def _assert_snapshot_import(self, symbol: str, evidence_title: str) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")
-            symbol = import_company_snapshot(repo, ROOT / "data" / "imports" / "besi.json")
-            report = Advisor(repo).analyze(symbol)
-            self.assertEqual(symbol, "BESI")
-            self.assertEqual(report.symbol, "BESI")
+            imported_symbol = import_company_snapshot(repo, ROOT / "data" / "imports" / f"{symbol.lower()}.json")
+            report = Advisor(repo).analyze(imported_symbol)
+            self.assertEqual(imported_symbol, symbol)
+            self.assertEqual(report.symbol, symbol)
             self.assertGreaterEqual(len(report.data_sources), 10)
-            self.assertTrue(any(hit.title == "BESI eerste echte snapshot" for hit in report.evidence))
+            self.assertTrue(any(hit.title == evidence_title for hit in report.evidence))
 
 
 if __name__ == "__main__":
     unittest.main()
-

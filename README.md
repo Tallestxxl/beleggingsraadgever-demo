@@ -44,10 +44,11 @@ Open daarna:
 http://127.0.0.1:8765
 ```
 
-Eerste echte aandeel-snapshot:
+Eerste echte aandeel-snapshots:
 
 ```text
 http://127.0.0.1:8765/analyze?symbol=BESI
+http://127.0.0.1:8765/analyze?symbol=ASML
 ```
 
 Losse stappen kunnen ook:
@@ -56,9 +57,12 @@ Losse stappen kunnen ook:
 /bin/sh scripts/br init-db
 /bin/sh scripts/br demo-seed
 /bin/sh scripts/br seed-besi
+/bin/sh scripts/br seed-imports
 /bin/sh scripts/br import-snapshot data/imports/besi.json
+/bin/sh scripts/br import-snapshot data/imports/asml.json
 /bin/sh scripts/br analyze DEMO
 /bin/sh scripts/br analyze BESI
+/bin/sh scripts/br analyze ASML
 ```
 
 De lokale database komt standaard in:

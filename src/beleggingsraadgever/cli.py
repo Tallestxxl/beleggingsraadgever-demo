@@ -7,7 +7,7 @@ from pathlib import Path
 
 from .advisor import Advisor
 from .importer import import_company_snapshot
-from .real_data import seed_besi
+from .real_data import seed_besi, seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
 from .web import serve
@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("init-db", help="Initialize the local database")
     subparsers.add_parser("demo-seed", help="Load deterministic demo data")
     subparsers.add_parser("seed-besi", help="Load the curated BESI v1 snapshot")
+    subparsers.add_parser("seed-imports", help="Load all curated company JSON snapshots")
     demo = subparsers.add_parser("demo", help="Initialize demo data and render a demo report")
     demo.add_argument("--symbol", default="DEMO")
 
@@ -64,6 +65,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "seed-besi":
         seed_besi(repository)
         print(f"BESI data loaded: {repository.db_path}")
+        return 0
+
+    if args.command == "seed-imports":
+        seed_curated_snapshots(repository)
+        print(f"Curated company snapshots loaded: {repository.db_path}")
         return 0
 
     if args.command == "demo":

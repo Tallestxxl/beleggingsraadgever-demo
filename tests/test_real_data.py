@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from beleggingsraadgever.advisor import Advisor
-from beleggingsraadgever.real_data import seed_besi
+from beleggingsraadgever.real_data import seed_besi, seed_curated_snapshots
 from beleggingsraadgever.storage import SQLiteRepository
 
 
@@ -23,6 +23,16 @@ class RealDataTests(unittest.TestCase):
             self.assertTrue(report.evidence)
             self.assertGreaterEqual(len(report.data_sources), 10)
             self.assertTrue(any(source.field_name == "revenue" for source in report.data_sources))
+
+    def test_seed_curated_snapshots_loads_asml(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            seed_curated_snapshots(repo)
+            report = Advisor(repo).analyze("ASML")
+            self.assertEqual(report.symbol, "ASML")
+            self.assertGreater(report.score.quality, 90)
+            self.assertLess(report.score.valuation, 25)
+            self.assertTrue(report.evidence)
 
 
 if __name__ == "__main__":

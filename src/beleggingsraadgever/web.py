@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .advisor import Advisor
 from .models import AdviceReport
-from .real_data import seed_besi
+from .real_data import seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
 
@@ -348,7 +348,7 @@ def serve(
     repository.init()
     if seed:
         seed_demo(repository)
-        seed_besi(repository)
+        seed_curated_snapshots(repository)
 
     handler = _make_handler(repository)
     server = ThreadingHTTPServer((host, port), handler)
