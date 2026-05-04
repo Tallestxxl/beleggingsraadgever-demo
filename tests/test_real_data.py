@@ -21,8 +21,9 @@ class RealDataTests(unittest.TestCase):
             self.assertGreater(report.score.quality, 90)
             self.assertLess(report.score.valuation, 25)
             self.assertTrue(report.evidence)
+            self.assertGreaterEqual(len(report.data_sources), 10)
+            self.assertTrue(any(source.field_name == "revenue" for source in report.data_sources))
 
 
 if __name__ == "__main__":
     unittest.main()
-

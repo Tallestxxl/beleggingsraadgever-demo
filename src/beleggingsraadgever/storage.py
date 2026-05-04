@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 from .knowledge import HashingVectorizer, chunk_text, cosine_similarity
-from .models import FinancialSnapshot, KnowledgeHit, MacroObservation, MarketSnapshot, Principle
+from .models import DataSource, FinancialSnapshot, KnowledgeHit, MacroObservation, MarketSnapshot, Principle
 
 DEFAULT_DB_PATH = Path("data/local/beleggingsraadgever.sqlite")
 
@@ -122,6 +122,20 @@ CREATE TABLE IF NOT EXISTS advice_runs (
   conviction TEXT NOT NULL,
   report_markdown TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS data_sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  field_name TEXT NOT NULL,
+  value_label TEXT NOT NULL,
+  source_name TEXT NOT NULL,
+  source_url TEXT NOT NULL,
+  source_date TEXT NOT NULL,
+  source_quality TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(symbol, field_name, source_name, source_date)
 );
 """
 
@@ -388,6 +402,61 @@ class SQLiteRepository:
                     observation.unit,
                 ),
             )
+
+    def upsert_data_source(self, source: DataSource) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO data_sources (
+                  symbol, field_name, value_label, source_name, source_url,
+                  source_date, source_quality, note
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, field_name, source_name, source_date) DO UPDATE SET
+                  value_label=excluded.value_label,
+                  source_url=excluded.source_url,
+                  source_quality=excluded.source_quality,
+                  note=excluded.note
+                """,
+                (
+                    source.symbol.upper(),
+                    source.field_name,
+                    source.value_label,
+                    source.source_name,
+                    source.source_url,
+                    source.source_date,
+                    source.source_quality,
+                    source.note,
+                ),
+            )
+
+    def data_sources_for_symbol(self, symbol: str) -> List[DataSource]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, symbol, field_name, value_label, source_name, source_url,
+                       source_date, source_quality, note
+                FROM data_sources
+                WHERE symbol = ?
+                ORDER BY field_name, source_quality, source_date DESC
+                """,
+                (symbol.upper(),),
+            ).fetchall()
+
+        return [
+            DataSource(
+                source_id=row["id"],
+                symbol=row["symbol"],
+                field_name=row["field_name"],
+                value_label=row["value_label"],
+                source_name=row["source_name"],
+                source_url=row["source_url"],
+                source_date=row["source_date"],
+                source_quality=row["source_quality"],
+                note=row["note"],
+            )
+            for row in rows
+        ]
 
     def latest_financial_snapshot(self, symbol: str) -> FinancialSnapshot:
         with self.connect() as conn:

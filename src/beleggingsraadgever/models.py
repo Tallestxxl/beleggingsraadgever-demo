@@ -87,6 +87,19 @@ class Principle:
 
 
 @dataclass(frozen=True)
+class DataSource:
+    symbol: str
+    field_name: str
+    value_label: str
+    source_name: str
+    source_url: str
+    source_date: str
+    source_quality: str
+    note: str = ""
+    source_id: Optional[int] = None
+
+
+@dataclass(frozen=True)
 class ScoreBreakdown:
     quality: float
     valuation: float
@@ -107,3 +120,4 @@ class AdviceReport:
     evidence: List[KnowledgeHit]
     data_freshness: Dict[str, str]
     assumptions: List[str] = field(default_factory=list)
+    data_sources: List[DataSource] = field(default_factory=list)

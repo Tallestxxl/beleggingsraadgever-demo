@@ -25,6 +25,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("Scorekaart", html)
             self.assertIn("Toon berekening", html)
             self.assertIn("Dataversheid", html)
+            self.assertIn("Bronnen per cijfer", html)
 
 
 if __name__ == "__main__":

@@ -287,6 +287,7 @@ h3 {
 
 .evidence-meta,
 .data-list,
+.source-list,
 .assumption-list,
 .risk-list {
   color: var(--muted);
@@ -466,6 +467,9 @@ def render_report(report: AdviceReport) -> str:
         f"<li>{html.escape(name)}: {html.escape(value)}</li>"
         for name, value in report.data_freshness.items()
     )
+    sources = "".join(render_data_source_item(source) for source in report.data_sources)
+    if not sources:
+        sources = '<p class="evidence-meta">Geen veldbronnen opgeslagen voor dit aandeel.</p>'
     assumptions = "".join(f"<li>{html.escape(item)}</li>" for item in report.assumptions)
 
     return f"""
@@ -512,6 +516,10 @@ def render_report(report: AdviceReport) -> str:
           <ul class="data-list">{freshness}</ul>
         </section>
         <section>
+          <h3>Bronnen per cijfer</h3>
+          <div class="source-list">{sources}</div>
+        </section>
+        <section>
           <h3>Aannames</h3>
           <ul class="assumption-list">{assumptions}</ul>
         </section>
@@ -550,6 +558,20 @@ def render_evidence_item(hit) -> str:
       <p class="evidence-title">{html.escape(hit.title)}</p>
       <p class="evidence-meta">{html.escape(hit.source_type)}{html.escape(date)} - score {hit.score:.2f}</p>
       <p class="evidence-text">{html.escape(excerpt)}</p>
+    </article>"""
+
+
+def render_data_source_item(source) -> str:
+    note = f"<br>{html.escape(source.note)}" if source.note else ""
+    return f"""
+    <article class="evidence-item">
+      <p class="evidence-title">{html.escape(source.field_name)}: {html.escape(source.value_label)}</p>
+      <p class="evidence-meta">
+        <a href="{html.escape(source.source_url)}" target="_blank" rel="noreferrer">{html.escape(source.source_name)}</a>
+        - {html.escape(source.source_date)}
+        - {html.escape(source.source_quality)}
+        {note}
+      </p>
     </article>"""
 
 

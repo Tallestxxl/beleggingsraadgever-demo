@@ -21,6 +21,7 @@ class Advisor:
         verdict = verdict_from_score(score)
         conviction = conviction_from_score(score)
         evidence = self._retrieve_evidence(normalized_symbol, financial, market)
+        data_sources = self.repository.data_sources_for_symbol(normalized_symbol)
 
         summary = self._build_summary(normalized_symbol, financial, market, verdict, score)
         data_freshness = {
@@ -44,6 +45,7 @@ class Advisor:
             evidence=evidence,
             data_freshness=data_freshness,
             assumptions=assumptions,
+            data_sources=data_sources,
         )
 
     def render_markdown(self, report: AdviceReport) -> str:
@@ -90,6 +92,15 @@ class Advisor:
 
         lines.extend(["", "## Dataversheid", ""])
         lines.extend(f"- {name}: {value}" for name, value in report.data_freshness.items())
+
+        if report.data_sources:
+            lines.extend(["", "## Bronvermelding per cijfer", ""])
+            for source in report.data_sources:
+                note = f" - {source.note}" if source.note else ""
+                lines.append(
+                    f"- {source.field_name}: {source.value_label} | "
+                    f"{source.source_name} ({source.source_date}, {source.source_quality}){note}"
+                )
 
         if report.score.details:
             lines.extend(["", "## Score-uitleg", ""])
