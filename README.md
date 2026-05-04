@@ -70,11 +70,17 @@ Losse stappen kunnen ook:
 Nieuwe aandelen toevoegen:
 
 ```bash
-/bin/sh scripts/br new-snapshot SHELL
-# Vul data/drafts/shell.json met cijfers, bronverwijzingen en casustekst.
-/bin/sh scripts/br validate-snapshot data/drafts/shell.json
-/bin/sh scripts/br import-snapshot data/drafts/shell.json
+/bin/sh scripts/br collect-snapshot FUGRO
+# Controleer de automatisch opgehaalde publieke data en vul je eigen principe/casustekst aan.
+/bin/sh scripts/br validate-snapshot data/drafts/fugro.json
+/bin/sh scripts/br import-snapshot data/drafts/fugro.json
 ```
+
+In de webinterface start dezelfde workflow automatisch: vul een onbekende
+ticker in, klik op `Analyseer`, en gebruik daarna `Haal marktdata op`. De
+datacollector vult publieke koers-, momentum-, waarderings- en eerste
+fundamentalsvelden voor zover beschikbaar. De resterende validatiepunten zijn
+bedoeld voor handmatige beleggingscasus, broncontrole en jouw eigen principe.
 
 De lokale database komt standaard in:
 

@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from .advisor import Advisor
+from .collector import collect_snapshot_data
 from .importer import (
     SnapshotValidationError,
     import_company_snapshot,
@@ -49,6 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     validate_snapshot = subparsers.add_parser("validate-snapshot", help="Validate a company JSON snapshot")
     validate_snapshot.add_argument("path", help="Path to company snapshot JSON")
+
+    collect_snapshot = subparsers.add_parser("collect-snapshot", help="Prefill a draft snapshot with public data")
+    collect_snapshot.add_argument("symbol")
+    collect_snapshot.add_argument("--path", help="Draft path; defaults to data/drafts/<symbol>.json")
 
     analyze = subparsers.add_parser("analyze", help="Analyze a symbol with local data")
     analyze.add_argument("symbol")
@@ -138,6 +143,21 @@ def main(argv: list[str] | None = None) -> int:
             _print_validation_errors(errors)
             return 1
         print(f"Snapshot is valid: {args.path}")
+        return 0
+
+    if args.command == "collect-snapshot":
+        path = Path(args.path) if args.path else None
+        result = collect_snapshot_data(args.symbol, path)
+        for message in result.messages:
+            print(message)
+        if result.updated_fields:
+            print("Bijgewerkte velden: " + ", ".join(result.updated_fields))
+        if result.errors:
+            if not result.messages:
+                print(result.errors[0])
+            print(f"Concept bijgewerkt, nog {len(result.errors)} validatiepunten open: {result.path}")
+            return 1
+        print(f"Snapshot is klaar voor import: {result.path}")
         return 0
 
     if args.command == "analyze":

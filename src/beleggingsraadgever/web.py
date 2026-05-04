@@ -13,6 +13,7 @@ from typing import Optional
 from urllib.parse import parse_qs, quote_plus, urlparse
 
 from .advisor import Advisor
+from .collector import collect_snapshot_data
 from .importer import (
     SnapshotValidationError,
     import_company_snapshot,
@@ -32,6 +33,7 @@ class SnapshotWorkflow:
     path: Path
     created: bool
     errors: list[str]
+    messages: list[str]
 
     @property
     def can_import(self) -> bool:
@@ -450,13 +452,13 @@ def _make_handler(repository: SQLiteRepository):
                 try:
                     report = Advisor(repository).analyze(symbol)
                 except LookupError:
-                    workflow = ensure_snapshot_workflow(symbol)
+                    workflow = ensure_snapshot_workflow(symbol, auto_collect=True)
 
             self._send_html(build_page(symbol=symbol, report=report, error=error, workflow=workflow))
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            if parsed.path != "/workflow/import":
+            if parsed.path not in {"/workflow/import", "/workflow/collect"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
 
@@ -466,6 +468,11 @@ def _make_handler(repository: SQLiteRepository):
             symbol = params.get("symbol", [""])[0].strip().upper()
             if not symbol:
                 self._send_html(build_page(error="Geen ticker ontvangen."))
+                return
+
+            if parsed.path == "/workflow/collect":
+                workflow = collect_snapshot_workflow(symbol)
+                self._send_html(build_page(symbol=symbol, workflow=workflow))
                 return
 
             workflow = ensure_snapshot_workflow(symbol)
@@ -482,7 +489,13 @@ def _make_handler(repository: SQLiteRepository):
             try:
                 import_company_snapshot(repository, workflow.path)
             except SnapshotValidationError as validation_error:
-                workflow = SnapshotWorkflow(symbol=symbol, path=workflow.path, created=False, errors=validation_error.errors)
+                workflow = SnapshotWorkflow(
+                    symbol=symbol,
+                    path=workflow.path,
+                    created=False,
+                    errors=validation_error.errors,
+                    messages=[],
+                )
                 self._send_html(build_page(symbol=symbol, workflow=workflow, error="Snapshot is nog niet importeerbaar."))
                 return
 
@@ -560,15 +573,42 @@ def build_page(
 </html>"""
 
 
-def ensure_snapshot_workflow(symbol: str, drafts_dir: Path = DRAFTS_DIR) -> SnapshotWorkflow:
+def ensure_snapshot_workflow(
+    symbol: str,
+    drafts_dir: Path = DRAFTS_DIR,
+    auto_collect: bool = False,
+) -> SnapshotWorkflow:
     normalized_symbol = symbol.strip().upper()
     path = drafts_dir / f"{normalized_symbol.lower()}.json"
     created = False
     if not path.exists():
         write_snapshot_template(normalized_symbol, path)
         created = True
+    messages: list[str] = []
+    if created and auto_collect:
+        collection = collect_snapshot_data(normalized_symbol, path)
+        messages.extend(collection.messages)
+        messages.extend(collection.errors[:1] if not collection.messages else [])
     errors = validate_snapshot_file(path)
-    return SnapshotWorkflow(symbol=normalized_symbol, path=path, created=created, errors=errors)
+    return SnapshotWorkflow(symbol=normalized_symbol, path=path, created=created, errors=errors, messages=messages)
+
+
+def collect_snapshot_workflow(symbol: str, drafts_dir: Path = DRAFTS_DIR) -> SnapshotWorkflow:
+    normalized_symbol = symbol.strip().upper()
+    path = drafts_dir / f"{normalized_symbol.lower()}.json"
+    result = collect_snapshot_data(normalized_symbol, path)
+    messages = list(result.messages)
+    if result.updated_fields:
+        messages.append("Bijgewerkte velden: " + ", ".join(result.updated_fields))
+    if result.errors and not result.messages:
+        messages.append(result.errors[0])
+    return SnapshotWorkflow(
+        symbol=normalized_symbol,
+        path=result.path,
+        created=False,
+        errors=validate_snapshot_file(result.path),
+        messages=messages,
+    )
 
 
 def validate_snapshot_file(path: Path) -> list[str]:
@@ -585,6 +625,7 @@ def validate_snapshot_file(path: Path) -> list[str]:
 def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
     status = "Concept aangemaakt" if workflow.created else "Concept gevonden"
     status_detail = "Klaar voor import" if workflow.can_import else f"{len(workflow.errors)} punten open"
+    messages = "".join(f"<li>{html.escape(message)}</li>" for message in workflow.messages)
     visible_errors = workflow.errors[:24]
     hidden_count = max(0, len(workflow.errors) - len(visible_errors))
     errors = "".join(f"<li>{html.escape(error)}</li>" for error in visible_errors)
@@ -612,6 +653,7 @@ def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
           <p class="evidence-meta">{html.escape(status)}</p>
           <code class="code-path">{html.escape(str(workflow.path))}</code>
         </section>
+        {f'<section><h3>Datacollector</h3><ul class="workflow-list">{messages}</ul></section>' if messages else ''}
         <section>
           <h3>Validatie</h3>
           <ul class="workflow-list">{errors}</ul>
@@ -622,6 +664,10 @@ def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
           <h3>Acties</h3>
           <div class="button-row">
             <a class="button secondary" href="/workflow?symbol={html.escape(workflow.symbol)}">Controleer opnieuw</a>
+            <form method="post" action="/workflow/collect">
+              <input type="hidden" name="symbol" value="{html.escape(workflow.symbol)}">
+              <button type="submit">Haal marktdata op</button>
+            </form>
             <form method="post" action="/workflow/import">
               <input type="hidden" name="symbol" value="{html.escape(workflow.symbol)}">
               <button type="submit"{import_disabled}>Importeer snapshot</button>

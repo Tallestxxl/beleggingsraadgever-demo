@@ -129,8 +129,9 @@ def validate_company_snapshot(data: Dict[str, Any]) -> List[str]:
     _validate_no_todos(errors, "financial_snapshot", financial)
     _validate_no_todos(errors, "market_snapshot", market)
 
-    source_fields = _validate_data_sources(errors, data_sources)
-    _validate_source_coverage(errors, financial, market, source_fields)
+    active_fields = _snapshot_metric_fields(financial, market)
+    source_fields = _validate_data_sources(errors, data_sources, active_fields)
+    _validate_source_coverage(errors, active_fields, source_fields)
     _validate_documents(errors, documents)
     _validate_principles(errors, principles, documents)
 
@@ -307,36 +308,54 @@ def _validate_no_todos(errors: List[str], section_name: str, section: Dict[str, 
             errors.append(f"{section_name}.{field} still contains TODO.")
 
 
-def _validate_data_sources(errors: List[str], data_sources: List[Any]) -> set[str]:
+def _validate_data_sources(errors: List[str], data_sources: List[Any], active_fields: set[str]) -> set[str]:
     source_fields: set[str] = set()
     for index, source in enumerate(data_sources):
         if not isinstance(source, dict):
             errors.append(f"data_sources[{index}] must be an object.")
             continue
+        field_name = source.get("field_name")
+        if _is_inactive_template_source(source, active_fields):
+            continue
         _validate_required_fields(errors, f"data_sources[{index}]", source, REQUIRED_DATA_SOURCE_FIELDS)
         _validate_no_todos(errors, f"data_sources[{index}]", source)
-        field_name = source.get("field_name")
-        if _is_nonempty_string(field_name):
+        if _is_nonempty_string(field_name) and "TODO" not in json.dumps(source).upper():
             source_fields.add(str(field_name))
         _validate_iso_date(errors, f"data_sources[{index}].source_date", source.get("source_date"))
-    if not data_sources:
+    if active_fields and not data_sources:
         errors.append("data_sources must contain at least one source.")
     return source_fields
 
 
 def _validate_source_coverage(
     errors: List[str],
-    financial: Dict[str, Any],
-    market: Dict[str, Any],
+    active_fields: set[str],
     source_fields: set[str],
 ) -> None:
-    covered_fields = {
+    for field in sorted(active_fields - source_fields):
+        errors.append(f"data_sources is missing a source for {field}.")
+
+
+def _snapshot_metric_fields(financial: Dict[str, Any], market: Dict[str, Any]) -> set[str]:
+    excluded = {"period_end", "period_type", "as_of", "currency"}
+    return {
         field
         for field, value in {**financial, **market}.items()
-        if field not in {"period_end", "period_type", "as_of", "currency"} and value is not None
+        if field not in excluded and value is not None
     }
-    for field in sorted(covered_fields - source_fields):
-        errors.append(f"data_sources is missing a source for {field}.")
+
+
+def _is_inactive_template_source(source: Dict[str, Any], active_fields: set[str]) -> bool:
+    field_name = source.get("field_name")
+    if not _is_nonempty_string(field_name) or str(field_name) in active_fields:
+        return False
+    template_values = [
+        source.get("value_label"),
+        source.get("source_name"),
+        source.get("source_url"),
+        source.get("note"),
+    ]
+    return any(isinstance(value, str) and "TODO" in value.upper() for value in template_values)
 
 
 def _validate_documents(errors: List[str], documents: List[Any]) -> None:
