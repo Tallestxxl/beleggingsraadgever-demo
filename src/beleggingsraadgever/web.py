@@ -6,6 +6,7 @@ import argparse
 import html
 import json
 from dataclasses import dataclass
+from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -125,6 +126,39 @@ input[type="text"] {
   font-size: 16px;
   padding: 8px 10px;
   text-transform: uppercase;
+}
+
+input[type="date"],
+select,
+textarea {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  padding: 8px 10px;
+}
+
+textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.note-form {
+  display: grid;
+  gap: 12px;
+}
+
+.note-form input[type="text"] {
+  text-transform: none;
+}
+
+.note-form .form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 220px);
+  gap: 12px;
 }
 
 button,
@@ -391,6 +425,10 @@ li + li {
   .score-row {
     grid-template-columns: 1fr;
   }
+
+  .note-form .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 """
 
@@ -460,7 +498,7 @@ def _make_handler(repository: SQLiteRepository):
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            if parsed.path not in {"/workflow/import", "/workflow/collect"}:
+            if parsed.path not in {"/workflow/import", "/workflow/collect", "/workflow/note"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
 
@@ -476,6 +514,12 @@ def _make_handler(repository: SQLiteRepository):
                 workflow = collect_snapshot_workflow(symbol)
                 report = build_draft_report(repository, workflow)
                 self._send_html(build_page(symbol=symbol, report=report, workflow=workflow))
+                return
+
+            if parsed.path == "/workflow/note":
+                workflow, note_error = save_case_note_workflow(symbol, params)
+                report = build_draft_report(repository, workflow)
+                self._send_html(build_page(symbol=symbol, report=report, workflow=workflow, error=note_error))
                 return
 
             workflow = ensure_snapshot_workflow(symbol)
@@ -623,6 +667,107 @@ def collect_snapshot_workflow(symbol: str, drafts_dir: Path = DRAFTS_DIR) -> Sna
         errors=validate_snapshot_file(result.path),
         messages=messages,
     )
+
+
+def save_case_note_workflow(symbol: str, params: dict, drafts_dir: Path = DRAFTS_DIR) -> tuple[SnapshotWorkflow, Optional[str]]:
+    normalized_symbol = symbol.strip().upper()
+    path = drafts_dir / f"{normalized_symbol.lower()}.json"
+    if not path.exists():
+        write_snapshot_template(normalized_symbol, path)
+
+    title = _first_param(params, "note_title")
+    source_type = _first_param(params, "source_type") or "eigen_notitie"
+    publication_date = _first_param(params, "publication_date") or date.today().isoformat()
+    raw_text = _first_param(params, "raw_text")
+    conclusion = _first_param(params, "principle_statement")
+
+    if not title or not raw_text or not conclusion:
+        workflow = ensure_snapshot_workflow(normalized_symbol, drafts_dir=drafts_dir)
+        return workflow, "Vul minimaal titel, tekstfragment en conclusie in."
+
+    try:
+        _save_case_note(path, normalized_symbol, title, source_type, publication_date, raw_text, conclusion)
+        message = "Casusnotitie opgeslagen en gekoppeld aan dit aandeel."
+    except (OSError, json.JSONDecodeError, SnapshotValidationError, ValueError) as error:
+        workflow = ensure_snapshot_workflow(normalized_symbol, drafts_dir=drafts_dir)
+        return workflow, f"Casusnotitie kon niet worden opgeslagen: {error}"
+
+    workflow = SnapshotWorkflow(
+        symbol=normalized_symbol,
+        path=path,
+        created=False,
+        errors=validate_snapshot_file(path),
+        messages=[message],
+    )
+    return workflow, None
+
+
+def _save_case_note(
+    path: Path,
+    symbol: str,
+    title: str,
+    source_type: str,
+    publication_date: str,
+    raw_text: str,
+    conclusion: str,
+) -> None:
+    data = load_company_snapshot(path)
+    if publication_date:
+        _required_iso_date(publication_date)
+
+    note_title = title.strip()
+    document = {
+        "title": note_title,
+        "source_type": source_type.strip() or "eigen_notitie",
+        "author": "Handmatig ingevoerd",
+        "publication_date": publication_date,
+        "tags": [symbol, "casusnotitie"],
+        "raw_text": raw_text.strip(),
+    }
+
+    documents = data.setdefault("documents", [])
+    data["documents"] = [
+        document_item
+        for document_item in documents
+        if not isinstance(document_item, dict) or document_item.get("title") != note_title
+    ] + [document]
+
+    principle = {
+        "title": f"{symbol}: {note_title}",
+        "statement": conclusion.strip(),
+        "category": "casus",
+        "approved": True,
+        "confidence": 1.0,
+        "source_document_title": note_title,
+    }
+
+    principles = data.setdefault("principles", [])
+    if principles and isinstance(principles[0], dict) and _principle_is_todo(principles[0]):
+        principles[0] = principle
+    else:
+        data["principles"] = [
+            item
+            for item in principles
+            if not isinstance(item, dict) or item.get("source_document_title") != note_title
+        ] + [principle]
+
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _first_param(params: dict, name: str) -> str:
+    values = params.get(name, [""])
+    return values[0].strip() if values else ""
+
+
+def _principle_is_todo(principle: dict) -> bool:
+    values = [principle.get("title"), principle.get("statement")]
+    return any(isinstance(value, str) and "TODO" in value.upper() for value in values)
+
+
+def _required_iso_date(value: str) -> None:
+    if len(value) != 10 or value[4] != "-" or value[7] != "-":
+        raise ValueError("datum moet YYYY-MM-DD gebruiken")
+    date.fromisoformat(value)
 
 
 def build_draft_report(repository: SQLiteRepository, workflow: SnapshotWorkflow) -> Optional[AdviceReport]:
@@ -826,6 +971,7 @@ def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
         </section>
       </div>
       <div>
+        {render_case_note_form(workflow)}
         <section>
           <h3>Acties</h3>
           <div class="button-row">
@@ -850,6 +996,51 @@ def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
         </section>
       </div>
     </div>"""
+
+
+def render_case_note_form(workflow: SnapshotWorkflow) -> str:
+    source_options = {
+        "eigen_notitie": "Eigen notitie",
+        "artikel": "Artikel",
+        "podcast": "Podcast",
+        "jaarverslag": "Jaarverslag",
+        "beleggers_belangen": "Beleggers Belangen",
+        "interview": "Interview",
+    }
+    options = "".join(
+        f'<option value="{html.escape(value)}">{html.escape(label)}</option>'
+        for value, label in source_options.items()
+    )
+    return f"""
+        <section>
+          <h3>Casusnotitie voor {html.escape(workflow.symbol)}</h3>
+          <form class="note-form" method="post" action="/workflow/note">
+            <input type="hidden" name="symbol" value="{html.escape(workflow.symbol)}">
+            <div>
+              <label for="note-title-{html.escape(workflow.symbol)}">Titel</label>
+              <input id="note-title-{html.escape(workflow.symbol)}" name="note_title" type="text" autocomplete="off">
+            </div>
+            <div class="form-grid">
+              <div>
+                <label for="source-type-{html.escape(workflow.symbol)}">Bron/type</label>
+                <select id="source-type-{html.escape(workflow.symbol)}" name="source_type">{options}</select>
+              </div>
+              <div>
+                <label for="publication-date-{html.escape(workflow.symbol)}">Datum</label>
+                <input id="publication-date-{html.escape(workflow.symbol)}" name="publication_date" type="date" value="{date.today().isoformat()}">
+              </div>
+            </div>
+            <div>
+              <label for="raw-text-{html.escape(workflow.symbol)}">Tekstfragment</label>
+              <textarea id="raw-text-{html.escape(workflow.symbol)}" name="raw_text"></textarea>
+            </div>
+            <div>
+              <label for="principle-statement-{html.escape(workflow.symbol)}">Belangrijk principe / conclusie</label>
+              <textarea id="principle-statement-{html.escape(workflow.symbol)}" name="principle_statement"></textarea>
+            </div>
+            <button type="submit">Sla casusnotitie op</button>
+          </form>
+        </section>"""
 
 
 def render_report(report: AdviceReport) -> str:

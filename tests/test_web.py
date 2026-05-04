@@ -10,7 +10,13 @@ from beleggingsraadgever.advisor import Advisor
 from beleggingsraadgever.importer import write_snapshot_template
 from beleggingsraadgever.sample_data import seed_demo
 from beleggingsraadgever.storage import SQLiteRepository
-from beleggingsraadgever.web import SnapshotWorkflow, build_draft_report, build_page, ensure_snapshot_workflow
+from beleggingsraadgever.web import (
+    SnapshotWorkflow,
+    build_draft_report,
+    build_page,
+    ensure_snapshot_workflow,
+    save_case_note_workflow,
+)
 
 
 class WebTests(unittest.TestCase):
@@ -41,6 +47,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("SHELL: Workflow gestart", html)
             self.assertIn("Conceptbestand", html)
             self.assertIn("Importeer snapshot", html)
+            self.assertIn("Casusnotitie voor SHELL", html)
             self.assertIn("financial_snapshot.revenue is required", html)
 
     def test_existing_incomplete_draft_auto_collects_on_analysis_flow(self) -> None:
@@ -156,6 +163,43 @@ class WebTests(unittest.TestCase):
             self.assertIn("conceptbestand", html)
             self.assertIn("Slotkoers EUR 12.35", html)
             self.assertNotIn("pe_ratio: TODO", html)
+
+    def test_case_note_replaces_todo_principle_and_makes_collected_draft_importable(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "aperam.json"
+            workflow = ensure_snapshot_workflow(
+                "APERAM",
+                drafts_dir=Path(tmp),
+                auto_collect=True,
+                fetch_text=_fake_web_stockanalysis_lookup_fetch,
+            )
+            self.assertEqual(workflow.path, path)
+            self.assertTrue(any("principles[0]" in error for error in workflow.errors))
+
+            workflow, error = save_case_note_workflow(
+                "APERAM",
+                {
+                    "note_title": ["Aperam cyclische staalcasus"],
+                    "source_type": ["eigen_notitie"],
+                    "publication_date": ["2026-05-04"],
+                    "raw_text": [
+                        "Aperam is gevoelig voor de staalcyclus, maar vrije kasstroom en dividenddiscipline zijn de kern."
+                    ],
+                    "principle_statement": [
+                        "Bij Aperam alleen opschalen wanneer vrije kasstroom en balans de dividenduitkering ondersteunen."
+                    ],
+                },
+                drafts_dir=Path(tmp),
+            )
+
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.assertIsNone(error)
+            self.assertEqual(workflow.errors, [])
+            self.assertTrue(any(doc["title"] == "Aperam cyclische staalcasus" for doc in data["documents"]))
+            self.assertEqual(data["principles"][0]["title"], "APERAM: Aperam cyclische staalcasus")
+            self.assertNotIn("TODO", data["principles"][0]["statement"])
 
 
 def _fake_web_stockanalysis_lookup_fetch(url: str) -> str:
