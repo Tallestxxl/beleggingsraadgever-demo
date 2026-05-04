@@ -137,6 +137,16 @@ CREATE TABLE IF NOT EXISTS data_sources (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(symbol, field_name, source_name, source_date)
 );
+
+CREATE TABLE IF NOT EXISTS snapshot_imports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  imported_from TEXT NOT NULL,
+  imported_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  source_checksum TEXT NOT NULL,
+  processed_path TEXT,
+  UNIQUE(symbol, source_checksum)
+);
 """
 
 
@@ -428,6 +438,29 @@ class SQLiteRepository:
                     source.source_quality,
                     source.note,
                 ),
+            )
+
+    def record_snapshot_import(
+        self,
+        *,
+        symbol: str,
+        imported_from: str,
+        source_checksum: str,
+        processed_path: Optional[str] = None,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO snapshot_imports (
+                  symbol, imported_from, source_checksum, processed_path
+                )
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(symbol, source_checksum) DO UPDATE SET
+                  imported_from=excluded.imported_from,
+                  imported_at=CURRENT_TIMESTAMP,
+                  processed_path=COALESCE(excluded.processed_path, snapshot_imports.processed_path)
+                """,
+                (symbol.upper(), imported_from, source_checksum, processed_path),
             )
 
     def data_sources_for_symbol(self, symbol: str) -> List[DataSource]:

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,7 +24,7 @@ from .importer import (
     write_snapshot_template,
 )
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
-from .real_data import DRAFTS_DIR, seed_curated_snapshots
+from .real_data import DRAFTS_DIR, PROCESSED_DIR, seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
 
@@ -534,7 +535,14 @@ def _make_handler(repository: SQLiteRepository):
                 return
 
             try:
-                import_company_snapshot(repository, workflow.path)
+                imported_symbol = import_company_snapshot(repository, workflow.path)
+                archive_path = archive_imported_snapshot(workflow.path, symbol, processed_dir=PROCESSED_DIR)
+                repository.record_snapshot_import(
+                    symbol=imported_symbol,
+                    imported_from=str(workflow.path),
+                    source_checksum=archive_path.source_checksum,
+                    processed_path=str(archive_path.path),
+                )
             except SnapshotValidationError as validation_error:
                 workflow = SnapshotWorkflow(
                     symbol=symbol,
@@ -803,6 +811,50 @@ def validate_snapshot_file(path: Path) -> list[str]:
         return [f"Snapshot JSON is ongeldig: {error.msg} op regel {error.lineno}."]
     except OSError as error:
         return [f"Snapshotbestand kan niet worden gelezen: {error}."]
+
+
+@dataclass(frozen=True)
+class ArchivedSnapshot:
+    path: Path
+    source_checksum: str
+
+
+def archive_imported_snapshot(path: Path, symbol: str, processed_dir: Path = PROCESSED_DIR) -> ArchivedSnapshot:
+    """Move an imported draft snapshot to processed storage and preserve audit metadata."""
+
+    source_path = Path(path)
+    source_bytes = source_path.read_bytes()
+    source_checksum = hashlib.sha256(source_bytes).hexdigest()
+    imported_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    data = json.loads(source_bytes.decode("utf-8"))
+    data["import_metadata"] = {
+        "imported_at": imported_at,
+        "imported_from": str(source_path),
+        "source_checksum": source_checksum,
+    }
+
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    destination = _unique_processed_path(processed_dir, symbol, imported_at, source_checksum)
+    destination.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    source_path.unlink()
+    return ArchivedSnapshot(path=destination, source_checksum=source_checksum)
+
+
+def _unique_processed_path(processed_dir: Path, symbol: str, imported_at: str, checksum: str) -> Path:
+    stamp = (
+        imported_at.replace("-", "")
+        .replace(":", "")
+        .replace("+", "-")
+        .replace(".", "")
+    )
+    stamp = "".join(character for character in stamp if character.isalnum() or character == "-")[:15]
+    base = f"{symbol.strip().lower()}-{stamp}-{checksum[:8]}"
+    destination = processed_dir / f"{base}.json"
+    index = 2
+    while destination.exists():
+        destination = processed_dir / f"{base}-{index}.json"
+        index += 1
+    return destination
 
 
 def _draft_has_core_figures(path: Path) -> bool:

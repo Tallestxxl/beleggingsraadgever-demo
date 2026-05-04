@@ -9,6 +9,7 @@ venv/
 dist/
 build/
 *.egg-info/
+exports/
 
 # Local/private investment data
 data/*.sqlite

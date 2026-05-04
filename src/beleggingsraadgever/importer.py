@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -64,7 +65,9 @@ class SnapshotValidationError(ValueError):
 def import_company_snapshot(repository: SQLiteRepository, path: Path) -> str:
     """Import one curated company snapshot and return its normalized symbol."""
 
-    data = load_company_snapshot(path)
+    snapshot_path = Path(path)
+    source_checksum = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+    data = load_company_snapshot(snapshot_path)
     errors = validate_company_snapshot(data)
     if errors:
         raise SnapshotValidationError(errors)
@@ -77,6 +80,11 @@ def import_company_snapshot(repository: SQLiteRepository, path: Path) -> str:
     _import_data_sources(repository, symbol, data.get("data_sources", []))
     document_ids = _import_documents(repository, data.get("documents", []))
     _import_principles(repository, document_ids, data.get("principles", []))
+    repository.record_snapshot_import(
+        symbol=symbol,
+        imported_from=str(snapshot_path),
+        source_checksum=source_checksum,
+    )
 
     return symbol
 
@@ -223,6 +231,8 @@ def _import_market_snapshot(repository: SQLiteRepository, symbol: str, data: Dic
 
 def _import_data_sources(repository: SQLiteRepository, symbol: str, sources: list[Dict[str, Any]]) -> None:
     for source in sources:
+        if _data_source_has_placeholders(source):
+            continue
         repository.upsert_data_source(DataSource(symbol=symbol, **source))
 
 
@@ -271,6 +281,17 @@ def _data_source_template(field_name: str) -> Dict[str, str]:
         "source_quality": "primair",
         "note": "TODO",
     }
+
+
+def _data_source_has_placeholders(source: Dict[str, Any]) -> bool:
+    return any(_is_placeholder(source.get(field)) for field in REQUIRED_DATA_SOURCE_FIELDS)
+
+
+def _is_placeholder(value: Any) -> bool:
+    if value is None:
+        return True
+    text = str(value).strip()
+    return not text or text == "YYYY-MM-DD" or text.upper().startswith("TODO")
 
 
 def _is_nonempty_string(value: Any) -> bool:

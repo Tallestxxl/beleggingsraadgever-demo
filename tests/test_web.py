@@ -12,6 +12,7 @@ from beleggingsraadgever.sample_data import seed_demo
 from beleggingsraadgever.storage import SQLiteRepository
 from beleggingsraadgever.web import (
     SnapshotWorkflow,
+    archive_imported_snapshot,
     build_draft_report,
     build_page,
     ensure_snapshot_workflow,
@@ -206,6 +207,42 @@ class WebTests(unittest.TestCase):
             self.assertIn("Workflowmeldingen", html)
             self.assertIn("Alle validatiepunten zijn opgelost", html)
             self.assertIn("button type=\"submit\">Importeer snapshot</button>", html)
+
+    def test_archive_imported_snapshot_moves_draft_to_processed_with_metadata(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "aperam.json"
+            processed_dir = Path(tmp) / "processed"
+            workflow = ensure_snapshot_workflow(
+                "APERAM",
+                drafts_dir=Path(tmp),
+                auto_collect=True,
+                fetch_text=_fake_web_stockanalysis_lookup_fetch,
+            )
+            workflow, error = save_case_note_workflow(
+                "APERAM",
+                {
+                    "note_title": ["Dividend"],
+                    "source_type": ["beleggers_belangen"],
+                    "publication_date": ["2026-05-05"],
+                    "raw_text": ["Free cashflow moet het kwartaaldividend dragen."],
+                    "principle_statement": ["Dividend is alleen aantrekkelijk wanneer kasstroom het ondersteunt."],
+                },
+                drafts_dir=Path(tmp),
+            )
+
+            self.assertIsNone(error)
+            self.assertEqual(workflow.errors, [])
+            archived = archive_imported_snapshot(path, "APERAM", processed_dir=processed_dir)
+            data = json.loads(archived.path.read_text(encoding="utf-8"))
+
+            self.assertFalse(path.exists())
+            self.assertTrue(archived.path.exists())
+            self.assertEqual(len(archived.source_checksum), 64)
+            self.assertEqual(data["import_metadata"]["source_checksum"], archived.source_checksum)
+            self.assertEqual(data["import_metadata"]["imported_from"], str(path))
+            self.assertEqual(data["principles"][0]["title"], "APERAM: Dividend")
 
 
 def _fake_web_stockanalysis_lookup_fetch(url: str) -> str:

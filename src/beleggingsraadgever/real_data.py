@@ -10,6 +10,7 @@ from .storage import SQLiteRepository
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 IMPORTS_DIR = DATA_DIR / "imports"
 DRAFTS_DIR = DATA_DIR / "drafts"
+PROCESSED_DIR = DATA_DIR / "processed"
 
 
 def seed_curated_snapshots(repository: SQLiteRepository) -> None:

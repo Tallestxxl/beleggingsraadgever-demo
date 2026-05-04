@@ -51,6 +51,33 @@ class ImporterTests(unittest.TestCase):
 
             self.assertIn("data_sources is missing a source for revenue.", context.exception.errors)
 
+    def test_import_skips_inactive_placeholder_sources(self) -> None:
+        data = load_company_snapshot(ROOT / "data" / "imports" / "asml.json")
+        data["data_sources"].append(
+            {
+                "field_name": "manual_extra",
+                "value_label": "TODO",
+                "source_name": "TODO",
+                "source_url": "TODO",
+                "source_date": "YYYY-MM-DD",
+                "source_quality": "primair",
+                "note": "TODO",
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            snapshot = Path(tmp) / "asml.json"
+            snapshot.write_text(json.dumps(data), encoding="utf-8")
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+
+            import_company_snapshot(repo, snapshot)
+
+            with repo.connect() as conn:
+                placeholder_count = conn.execute(
+                    "SELECT COUNT(*) FROM data_sources WHERE source_name = 'TODO'"
+                ).fetchone()[0]
+            self.assertEqual(placeholder_count, 0)
+
     def _assert_snapshot_import(self, symbol: str, evidence_title: str) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")
@@ -60,6 +87,20 @@ class ImporterTests(unittest.TestCase):
             self.assertEqual(report.symbol, symbol)
             self.assertGreaterEqual(len(report.data_sources), 10)
             self.assertTrue(any(hit.title == evidence_title for hit in report.evidence))
+
+            with repo.connect() as conn:
+                import_row = conn.execute(
+                    """
+                    SELECT imported_from, source_checksum, processed_path
+                    FROM snapshot_imports
+                    WHERE symbol = ?
+                    """,
+                    (symbol,),
+                ).fetchone()
+            self.assertIsNotNone(import_row)
+            self.assertTrue(import_row["imported_from"].endswith(f"{symbol.lower()}.json"))
+            self.assertEqual(len(import_row["source_checksum"]), 64)
+            self.assertIsNone(import_row["processed_path"])
 
 
 if __name__ == "__main__":
