@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
+export BELEGGINGSRAADGEVER_DB="${BELEGGINGSRAADGEVER_DB:-/private/tmp/beleggingsraadgever.sqlite}"
+
+exec "$ROOT_DIR/scripts/br" demo
+

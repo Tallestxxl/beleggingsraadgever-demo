@@ -17,6 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("init-db", help="Initialize the local database")
     subparsers.add_parser("demo-seed", help="Load deterministic demo data")
+    demo = subparsers.add_parser("demo", help="Initialize demo data and render a demo report")
+    demo.add_argument("--symbol", default="DEMO")
 
     import_text = subparsers.add_parser("import-text", help="Import an OCR/text file into the RAG store")
     import_text.add_argument("path", help="Path to UTF-8 text file")
@@ -47,6 +49,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Demo data loaded: {repository.db_path}")
         return 0
 
+    if args.command == "demo":
+        seed_demo(repository)
+        advisor = Advisor(repository)
+        report = advisor.analyze(args.symbol)
+        print(advisor.render_markdown(report))
+        return 0
+
     if args.command == "import-text":
         repository.init()
         raw_text = Path(args.path).read_text(encoding="utf-8")
@@ -75,4 +84,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

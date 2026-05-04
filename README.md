@@ -26,12 +26,18 @@ python3 -m unittest discover -s tests
 python3 scripts/demo_analysis.py
 ```
 
-Of handmatig:
+Aanbevolen lokaal gebruik:
 
 ```bash
-PYTHONPATH=src python3 -m beleggingsraadgever init-db
-PYTHONPATH=src python3 -m beleggingsraadgever demo-seed
-PYTHONPATH=src python3 -m beleggingsraadgever analyze DEMO
+./scripts/br demo
+```
+
+Losse stappen kunnen ook:
+
+```bash
+./scripts/br init-db
+./scripts/br demo-seed
+./scripts/br analyze DEMO
 ```
 
 De lokale database komt standaard in:

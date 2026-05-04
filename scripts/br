@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
+PYTHON_BIN="${BELEGGINGSRAADGEVER_PYTHON:-/usr/bin/python3}"
+DB_PATH="${BELEGGINGSRAADGEVER_DB:-$ROOT_DIR/data/local/beleggingsraadgever.sqlite}"
+
+PYTHONPATH="$ROOT_DIR/src" "$PYTHON_BIN" -m beleggingsraadgever --db "$DB_PATH" "$@"
+
