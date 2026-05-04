@@ -50,4 +50,3 @@ Als `gh` beschikbaar is, kan de flow worden uitgebreid met:
 - branch aanmaken
 - pull request openen
 - checks uitlezen
-

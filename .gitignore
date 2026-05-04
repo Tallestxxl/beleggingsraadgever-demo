@@ -14,9 +14,11 @@ build/
 data/*.sqlite
 data/*.sqlite-*
 data/*.tmp
+data/local/*
 data/raw/*
 data/processed/*
 data/indexes/*
+!data/local/.gitkeep
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/indexes/.gitkeep

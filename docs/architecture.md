@@ -80,4 +80,3 @@ De volgende data wordt niet gecommit:
 - vectorindexen
 - portefeuillegegevens
 - API keys
-

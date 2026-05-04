@@ -11,7 +11,7 @@ from typing import Iterable, List, Optional
 from .knowledge import HashingVectorizer, chunk_text, cosine_similarity
 from .models import FinancialSnapshot, KnowledgeHit, MacroObservation, MarketSnapshot, Principle
 
-DEFAULT_DB_PATH = Path("data/beleggingsraadgever.sqlite")
+DEFAULT_DB_PATH = Path("data/local/beleggingsraadgever.sqlite")
 
 
 SCHEMA = """

@@ -37,7 +37,7 @@ PYTHONPATH=src python3 -m beleggingsraadgever analyze DEMO
 De lokale database komt standaard in:
 
 ```text
-data/beleggingsraadgever.sqlite
+data/local/beleggingsraadgever.sqlite
 ```
 
 ## Belangrijke mappen
@@ -48,6 +48,7 @@ docs/                      Architectuur en ontwerpkeuzes
 scripts/                   Lokale hulpscripts
 tests/                     Unit tests
 data/raw/                  Lokale scans/PDFs/exports, niet committen
+data/local/                Lokale SQLite database, niet committen
 data/processed/            OCR-tekst en tussenbestanden, niet committen
 data/indexes/              Vectorindexen of afgeleide indexbestanden
 ```
@@ -57,4 +58,3 @@ data/indexes/              Vectorindexen of afgeleide indexbestanden
 De repo is lokaal al bruikbaar. Voor publicatie naar GitHub: maak eerst een
 private repository aan en voeg daarna de remote toe. Zie
 `docs/github-private-repo.md`.
-
