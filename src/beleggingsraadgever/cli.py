@@ -6,8 +6,14 @@ import argparse
 from pathlib import Path
 
 from .advisor import Advisor
-from .importer import import_company_snapshot
-from .real_data import seed_besi, seed_curated_snapshots
+from .importer import (
+    SnapshotValidationError,
+    import_company_snapshot,
+    load_company_snapshot,
+    validate_company_snapshot,
+    write_snapshot_template,
+)
+from .real_data import DRAFTS_DIR, seed_besi, seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
 from .web import serve
@@ -35,6 +41,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     import_snapshot = subparsers.add_parser("import-snapshot", help="Import a curated company JSON snapshot")
     import_snapshot.add_argument("path", help="Path to company snapshot JSON")
+
+    new_snapshot = subparsers.add_parser("new-snapshot", help="Create a new company JSON snapshot template")
+    new_snapshot.add_argument("symbol")
+    new_snapshot.add_argument("--output", help="Output path; defaults to data/drafts/<symbol>.json")
+    new_snapshot.add_argument("--force", action="store_true", help="Overwrite an existing template")
+
+    validate_snapshot = subparsers.add_parser("validate-snapshot", help="Validate a company JSON snapshot")
+    validate_snapshot.add_argument("path", help="Path to company snapshot JSON")
 
     analyze = subparsers.add_parser("analyze", help="Analyze a symbol with local data")
     analyze.add_argument("symbol")
@@ -95,8 +109,35 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "import-snapshot":
-        symbol = import_company_snapshot(repository, Path(args.path))
+        try:
+            symbol = import_company_snapshot(repository, Path(args.path))
+        except SnapshotValidationError as error:
+            _print_validation_errors(error.errors)
+            return 1
         print(f"Imported company snapshot for {symbol}: {repository.db_path}")
+        return 0
+
+    if args.command == "new-snapshot":
+        output = Path(args.output) if args.output else DRAFTS_DIR / f"{args.symbol.lower()}.json"
+        try:
+            path = write_snapshot_template(args.symbol, output, force=args.force)
+        except FileExistsError as error:
+            print(error)
+            print("Use --force to overwrite.")
+            return 1
+        print(f"Snapshot template created: {path}")
+        print(f"Next: edit it, then run: /bin/sh scripts/br validate-snapshot {path}")
+        return 0
+
+    if args.command == "validate-snapshot":
+        try:
+            errors = validate_company_snapshot(load_company_snapshot(Path(args.path)))
+        except SnapshotValidationError as error:
+            errors = error.errors
+        if errors:
+            _print_validation_errors(errors)
+            return 1
+        print(f"Snapshot is valid: {args.path}")
         return 0
 
     if args.command == "analyze":
@@ -112,6 +153,12 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.error(f"Unknown command: {args.command}")
     return 2
+
+
+def _print_validation_errors(errors: list[str]) -> None:
+    print("Snapshot validation failed:")
+    for error in errors:
+        print(f"- {error}")
 
 
 if __name__ == "__main__":

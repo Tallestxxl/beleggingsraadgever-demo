@@ -128,6 +128,15 @@
       "note": "Voorgesteld dividend over 2025."
     },
     {
+      "field_name": "dividend_yield",
+      "value_label": "Dividendrendement 0.64%",
+      "source_name": "Beleggingsraadgever berekening",
+      "source_url": "https://www.besi.com/events/events-shows/details/be-semiconductor-industries-nv-announces-q4-25-and-full-year-2025-results/",
+      "source_date": "2026-05-04",
+      "source_quality": "afgeleid",
+      "note": "Afgeleid uit dividend per aandeel en slotkoers."
+    },
+    {
       "field_name": "buyback_value",
       "value_label": "Buybacks EUR 14.2 mln",
       "source_name": "Besi Q1 2026 results",
@@ -192,4 +201,3 @@
     }
   ]
 }
-

@@ -7,7 +7,9 @@ from pathlib import Path
 from .importer import import_company_snapshot
 from .storage import SQLiteRepository
 
-IMPORTS_DIR = Path(__file__).resolve().parents[2] / "data" / "imports"
+DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+IMPORTS_DIR = DATA_DIR / "imports"
+DRAFTS_DIR = DATA_DIR / "drafts"
 
 
 def seed_curated_snapshots(repository: SQLiteRepository) -> None:

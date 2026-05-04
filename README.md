@@ -60,9 +60,20 @@ Losse stappen kunnen ook:
 /bin/sh scripts/br seed-imports
 /bin/sh scripts/br import-snapshot data/imports/besi.json
 /bin/sh scripts/br import-snapshot data/imports/asml.json
+/bin/sh scripts/br new-snapshot SHELL
+/bin/sh scripts/br validate-snapshot data/drafts/shell.json
 /bin/sh scripts/br analyze DEMO
 /bin/sh scripts/br analyze BESI
 /bin/sh scripts/br analyze ASML
+```
+
+Nieuwe aandelen toevoegen:
+
+```bash
+/bin/sh scripts/br new-snapshot SHELL
+# Vul data/drafts/shell.json met cijfers, bronverwijzingen en casustekst.
+/bin/sh scripts/br validate-snapshot data/drafts/shell.json
+/bin/sh scripts/br import-snapshot data/drafts/shell.json
 ```
 
 De lokale database komt standaard in:
@@ -79,6 +90,7 @@ docs/                      Architectuur en ontwerpkeuzes
 scripts/                   Lokale hulpscripts
 tests/                     Unit tests
 data/imports/              Openbare, curated aandeel-snapshots
+data/drafts/               Lokale concept-snapshots, niet committen
 data/raw/                  Lokale scans/PDFs/exports, niet committen
 data/local/                Lokale SQLite database, niet committen
 data/processed/            OCR-tekst en tussenbestanden, niet committen
