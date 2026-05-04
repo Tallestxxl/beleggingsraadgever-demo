@@ -37,6 +37,15 @@ class CollectorTests(unittest.TestCase):
         self.assertAlmostEqual(market.momentum_12m or 0, 1.0)
         self.assertIsNotNone(market.volatility_1y)
 
+    def test_collect_market_data_uses_stockanalysis_symbol_lookup(self) -> None:
+        market = collect_market_data("APERAM", fetch_text=_fake_stockanalysis_lookup_fetch)
+
+        self.assertEqual(market.provider, "StockAnalysis")
+        self.assertEqual(market.provider_symbol, "AMS:APAM")
+        self.assertEqual(market.as_of, "2026-04-30")
+        self.assertEqual(market.close_price, 20.0)
+        self.assertEqual(market.revenue, 1_000_000_000)
+
     def test_collect_snapshot_data_prefills_market_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "fugro.json"
@@ -64,6 +73,23 @@ def _fake_stockanalysis_fetch(url: str) -> str:
     if "statistics" in url:
         return _fake_stockanalysis_statistics_html()
     if "stockanalysis.com/quote/ams/FUR/" in url:
+        return _fake_stockanalysis_overview_html()
+    return "Page Not Found - 404"
+
+
+def _fake_stockanalysis_lookup_fetch(url: str) -> str:
+    if "symbol-lookup" in url:
+        return """
+        <script>
+          data:[{type:"data",data:{query:"APERAM",count:1,
+          results:[{s:"@ams/APAM",n:"Aperam S.A.",t:"Stock",p:47.22,m:3282864667}]}}]
+        </script>
+        """
+    if "financials" in url and "quote/ams/APAM" in url:
+        return _fake_stockanalysis_financials_html()
+    if "statistics" in url and "quote/ams/APAM" in url:
+        return _fake_stockanalysis_statistics_html()
+    if "stockanalysis.com/quote/ams/APAM/" in url:
         return _fake_stockanalysis_overview_html()
     return "Page Not Found - 404"
 

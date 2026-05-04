@@ -13,6 +13,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 from urllib.error import URLError
+from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
 from .importer import load_company_snapshot, validate_company_snapshot, write_snapshot_template
@@ -122,7 +123,46 @@ def collect_market_data(symbol: str, fetch_text: Optional[FetchText] = None) -> 
 
     fetcher = fetch_text or _fetch_url_text
     errors: List[str] = []
+    tried_stockanalysis_urls = set()
     for candidate in _stockanalysis_candidates(symbol):
+        tried_stockanalysis_urls.add(candidate.source_url)
+        try:
+            overview_html = fetcher(candidate.source_url)
+            if _is_stockanalysis_not_found(overview_html):
+                raise DataCollectionError(f"StockAnalysis {candidate.provider_symbol}: pagina niet gevonden.")
+            statistics_html = ""
+            try:
+                fetched_statistics_html = fetcher(candidate.statistics_url)
+                if not _is_stockanalysis_not_found(fetched_statistics_html):
+                    statistics_html = fetched_statistics_html
+            except (DataCollectionError, OSError, URLError):
+                statistics_html = ""
+            financials_html = ""
+            try:
+                fetched_financials_html = fetcher(candidate.financials_url)
+                if not _is_stockanalysis_not_found(fetched_financials_html):
+                    financials_html = fetched_financials_html
+            except (DataCollectionError, OSError, URLError):
+                financials_html = ""
+            return _market_data_from_stockanalysis(candidate, overview_html, statistics_html, financials_html)
+        except DataCollectionError as error:
+            errors.append(str(error))
+        except (OSError, URLError) as error:
+            errors.append(f"StockAnalysis {candidate.provider_symbol}: {error}")
+
+    try:
+        lookup_html = fetcher(_stockanalysis_lookup_url(symbol))
+        lookup_candidates = [
+            candidate
+            for candidate in _stockanalysis_lookup_candidates(lookup_html)
+            if candidate.source_url not in tried_stockanalysis_urls
+        ]
+    except (OSError, URLError, DataCollectionError) as error:
+        lookup_candidates = []
+        errors.append(f"StockAnalysis symbol lookup: {error}")
+
+    for candidate in lookup_candidates:
+        tried_stockanalysis_urls.add(candidate.source_url)
         try:
             overview_html = fetcher(candidate.source_url)
             if _is_stockanalysis_not_found(overview_html):
@@ -275,6 +315,66 @@ def _stockanalysis_candidates(symbol: str) -> Iterable[StockAnalysisCandidate]:
             statistics_url=f"{base_url}statistics/",
             financials_url=f"{base_url}financials/",
         )
+
+
+def _stockanalysis_lookup_url(symbol: str) -> str:
+    return f"https://stockanalysis.com/symbol-lookup/?q={quote_plus(symbol.strip())}"
+
+
+def _stockanalysis_lookup_candidates(raw_html: str) -> Iterable[StockAnalysisCandidate]:
+    seen = set()
+    for lookup_symbol in _parse_stockanalysis_lookup_symbols(raw_html):
+        candidate = _stockanalysis_candidate_from_lookup_symbol(lookup_symbol)
+        if candidate is None or candidate.source_url in seen:
+            continue
+        seen.add(candidate.source_url)
+        yield candidate
+
+
+def _parse_stockanalysis_lookup_symbols(raw_html: str) -> List[str]:
+    symbols: List[str] = []
+    for match in re.finditer(r'\{s:"([^"]+)",n:"(?:\\.|[^"])*",t:"Stock"', raw_html):
+        symbols.append(_decode_js_string(match.group(1)))
+    for match in re.finditer(r'href="/(stocks/[A-Za-z0-9.\-]+/|quote/[a-z]+/[A-Za-z0-9.\-]+/)"', raw_html):
+        path = match.group(1)
+        if path.startswith("stocks/"):
+            symbols.append(path.removeprefix("stocks/").strip("/").upper())
+        else:
+            _, exchange, ticker = path.strip("/").split("/", 2)
+            symbols.append(f"@{exchange}/{ticker.strip('/')}")
+    return symbols
+
+
+def _stockanalysis_candidate_from_lookup_symbol(lookup_symbol: str) -> Optional[StockAnalysisCandidate]:
+    symbol = lookup_symbol.strip()
+    if not symbol:
+        return None
+    if symbol.startswith("@") and "/" in symbol:
+        exchange, ticker = symbol[1:].split("/", 1)
+        exchange = exchange.strip().lower()
+        ticker = ticker.strip().upper()
+        if not exchange or not ticker:
+            return None
+        return _stockanalysis_candidate_from_path(f"{exchange.upper()}:{ticker}", f"quote/{exchange}/{ticker}/")
+    if ":" in symbol:
+        exchange, ticker = symbol.split(":", 1)
+        exchange = exchange.strip().lower()
+        ticker = ticker.strip().upper()
+        if not exchange or not ticker:
+            return None
+        return _stockanalysis_candidate_from_path(f"{exchange.upper()}:{ticker}", f"quote/{exchange}/{ticker}/")
+    ticker = symbol.upper()
+    return _stockanalysis_candidate_from_path(ticker, f"stocks/{ticker.lower()}/")
+
+
+def _stockanalysis_candidate_from_path(provider_symbol: str, path: str) -> StockAnalysisCandidate:
+    base_url = f"https://stockanalysis.com/{path}"
+    return StockAnalysisCandidate(
+        provider_symbol=provider_symbol,
+        source_url=base_url,
+        statistics_url=f"{base_url}statistics/",
+        financials_url=f"{base_url}financials/",
+    )
 
 
 def _stooq_candidates(symbol: str) -> Iterable[str]:

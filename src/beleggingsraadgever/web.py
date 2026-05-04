@@ -590,6 +590,7 @@ def ensure_snapshot_workflow(
     symbol: str,
     drafts_dir: Path = DRAFTS_DIR,
     auto_collect: bool = False,
+    fetch_text=None,
 ) -> SnapshotWorkflow:
     normalized_symbol = symbol.strip().upper()
     path = drafts_dir / f"{normalized_symbol.lower()}.json"
@@ -598,8 +599,8 @@ def ensure_snapshot_workflow(
         write_snapshot_template(normalized_symbol, path)
         created = True
     messages: list[str] = []
-    if created and auto_collect:
-        collection = collect_snapshot_data(normalized_symbol, path)
+    if auto_collect and (created or not _draft_has_core_figures(path)):
+        collection = collect_snapshot_data(normalized_symbol, path, fetch_text=fetch_text)
         messages.extend(collection.messages)
         messages.extend(collection.errors[:1] if not collection.messages else [])
     errors = validate_snapshot_file(path)
@@ -657,6 +658,16 @@ def validate_snapshot_file(path: Path) -> list[str]:
         return [f"Snapshot JSON is ongeldig: {error.msg} op regel {error.lineno}."]
     except OSError as error:
         return [f"Snapshotbestand kan niet worden gelezen: {error}."]
+
+
+def _draft_has_core_figures(path: Path) -> bool:
+    try:
+        snapshot = load_company_snapshot(path)
+        _financial_from_snapshot(str(snapshot.get("symbol", "")), snapshot)
+        _market_from_snapshot(str(snapshot.get("symbol", "")), snapshot)
+        return True
+    except (KeyError, TypeError, ValueError, SnapshotValidationError, json.JSONDecodeError, OSError):
+        return False
 
 
 def _financial_from_snapshot(symbol: str, snapshot: dict) -> FinancialSnapshot:
