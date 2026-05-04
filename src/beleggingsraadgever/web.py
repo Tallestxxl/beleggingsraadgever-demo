@@ -21,7 +21,7 @@ from .importer import (
     validate_company_snapshot,
     write_snapshot_template,
 )
-from .models import AdviceReport
+from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
 from .real_data import DRAFTS_DIR, seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
@@ -448,11 +448,13 @@ def _make_handler(repository: SQLiteRepository):
 
             if parsed.path == "/workflow":
                 workflow = ensure_snapshot_workflow(symbol)
+                report = build_draft_report(repository, workflow)
             elif parsed.path == "/analyze" or parsed.query:
                 try:
                     report = Advisor(repository).analyze(symbol)
                 except LookupError:
                     workflow = ensure_snapshot_workflow(symbol, auto_collect=True)
+                    report = build_draft_report(repository, workflow)
 
             self._send_html(build_page(symbol=symbol, report=report, error=error, workflow=workflow))
 
@@ -472,7 +474,8 @@ def _make_handler(repository: SQLiteRepository):
 
             if parsed.path == "/workflow/collect":
                 workflow = collect_snapshot_workflow(symbol)
-                self._send_html(build_page(symbol=symbol, workflow=workflow))
+                report = build_draft_report(repository, workflow)
+                self._send_html(build_page(symbol=symbol, report=report, workflow=workflow))
                 return
 
             workflow = ensure_snapshot_workflow(symbol)
@@ -533,7 +536,17 @@ def build_page(
 ) -> str:
     escaped_symbol = html.escape(symbol)
     content = ""
-    if workflow:
+    if workflow and report:
+        notice_text = error or (
+            "Conceptanalyse: de cijfers zijn al bruikbaar voor een eerste score. "
+            "De snapshot is nog niet definitief geïmporteerd zolang er validatiepunten open staan."
+        )
+        content = (
+            f'<div class="notice">{html.escape(notice_text)}</div>'
+            + render_report(report)
+            + render_snapshot_workflow(workflow)
+        )
+    elif workflow:
         notice = f'<div class="notice">{html.escape(error)}</div>' if error else ""
         content = notice + render_snapshot_workflow(workflow)
     elif error:
@@ -611,6 +624,30 @@ def collect_snapshot_workflow(symbol: str, drafts_dir: Path = DRAFTS_DIR) -> Sna
     )
 
 
+def build_draft_report(repository: SQLiteRepository, workflow: SnapshotWorkflow) -> Optional[AdviceReport]:
+    """Build a provisional report from a draft snapshot when core figures are present."""
+
+    try:
+        snapshot = load_company_snapshot(workflow.path)
+        financial = _financial_from_snapshot(workflow.symbol, snapshot)
+        market = _market_from_snapshot(workflow.symbol, snapshot)
+    except (KeyError, TypeError, ValueError, SnapshotValidationError, json.JSONDecodeError, OSError):
+        return None
+
+    return Advisor(repository).analyze_snapshots(
+        workflow.symbol,
+        financial,
+        market,
+        data_sources=_data_sources_from_snapshot(workflow.symbol, snapshot),
+        evidence=_evidence_from_snapshot(snapshot),
+        extra_assumptions=[
+            "Dit is een conceptanalyse uit het lokale conceptbestand; nog niet alle handmatige controlepunten zijn afgerond.",
+            "Concurrentiepositie, cycliciteit, managementsignalen en jouw beleggingsprincipe kunnen het oordeel nog wijzigen.",
+        ],
+        knowledge_label="conceptbestand",
+    )
+
+
 def validate_snapshot_file(path: Path) -> list[str]:
     try:
         return validate_company_snapshot(load_company_snapshot(path))
@@ -620,6 +657,124 @@ def validate_snapshot_file(path: Path) -> list[str]:
         return [f"Snapshot JSON is ongeldig: {error.msg} op regel {error.lineno}."]
     except OSError as error:
         return [f"Snapshotbestand kan niet worden gelezen: {error}."]
+
+
+def _financial_from_snapshot(symbol: str, snapshot: dict) -> FinancialSnapshot:
+    data = snapshot["financial_snapshot"]
+    return FinancialSnapshot(
+        symbol=symbol,
+        period_end=_required_text(data.get("period_end")),
+        period_type=_required_text(data.get("period_type")),
+        revenue=_required_float(data.get("revenue")),
+        gross_margin=_optional_float(data.get("gross_margin")),
+        operating_margin=_optional_float(data.get("operating_margin")),
+        net_margin=_optional_float(data.get("net_margin")),
+        free_cash_flow=_optional_float(data.get("free_cash_flow")),
+        debt=_optional_float(data.get("debt")),
+        cash=_optional_float(data.get("cash")),
+        shares_outstanding=_optional_float(data.get("shares_outstanding")),
+        dividend_per_share=_optional_float(data.get("dividend_per_share")),
+        buyback_value=_optional_float(data.get("buyback_value")),
+    )
+
+
+def _market_from_snapshot(symbol: str, snapshot: dict) -> MarketSnapshot:
+    data = snapshot["market_snapshot"]
+    return MarketSnapshot(
+        symbol=symbol,
+        as_of=_required_text(data.get("as_of")),
+        close_price=_required_float(data.get("close_price")),
+        currency=_required_text(data.get("currency")),
+        pe_ratio=_optional_float(data.get("pe_ratio")),
+        ev_ebitda=_optional_float(data.get("ev_ebitda")),
+        fcf_yield=_optional_float(data.get("fcf_yield")),
+        dividend_yield=_optional_float(data.get("dividend_yield")),
+        momentum_12m=_optional_float(data.get("momentum_12m")),
+        volatility_1y=_optional_float(data.get("volatility_1y")),
+    )
+
+
+def _data_sources_from_snapshot(symbol: str, snapshot: dict) -> list[DataSource]:
+    sources = []
+    for source in snapshot.get("data_sources", []):
+        if not isinstance(source, dict):
+            continue
+        required = [
+            source.get("field_name"),
+            source.get("value_label"),
+            source.get("source_name"),
+            source.get("source_url"),
+            source.get("source_date"),
+            source.get("source_quality"),
+        ]
+        if any(_is_placeholder(value) for value in required):
+            continue
+        sources.append(
+            DataSource(
+                symbol=symbol,
+                field_name=str(source["field_name"]),
+                value_label=str(source["value_label"]),
+                source_name=str(source["source_name"]),
+                source_url=str(source["source_url"]),
+                source_date=str(source["source_date"]),
+                source_quality=str(source["source_quality"]),
+                note=str(source.get("note") or ""),
+            )
+        )
+    return sources
+
+
+def _evidence_from_snapshot(snapshot: dict) -> list[KnowledgeHit]:
+    hits = []
+    for index, document in enumerate(snapshot.get("documents", [])):
+        if not isinstance(document, dict):
+            continue
+        raw_text = str(document.get("raw_text") or "").strip()
+        if not raw_text or "TODO:" in raw_text:
+            continue
+        tags = document.get("tags", [])
+        if not isinstance(tags, list):
+            tags = []
+        hits.append(
+            KnowledgeHit(
+                chunk=KnowledgeChunk(
+                    document_id=0,
+                    chunk_index=index,
+                    text=raw_text,
+                    tags=[str(tag) for tag in tags],
+                ),
+                score=1.0,
+                title=str(document.get("title") or "Conceptdocument"),
+                source_type=str(document.get("source_type") or "concept_snapshot"),
+                publication_date=document.get("publication_date"),
+            )
+        )
+    return hits[:5]
+
+
+def _required_text(value) -> str:
+    if _is_placeholder(value):
+        raise ValueError("required text is missing")
+    return str(value).strip()
+
+
+def _required_float(value) -> float:
+    if _is_placeholder(value):
+        raise ValueError("required number is missing")
+    return float(value)
+
+
+def _optional_float(value) -> Optional[float]:
+    if _is_placeholder(value):
+        return None
+    return float(value)
+
+
+def _is_placeholder(value) -> bool:
+    if value is None:
+        return True
+    text = str(value).strip()
+    return not text or text == "YYYY-MM-DD" or text.upper().startswith("TODO")
 
 
 def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
@@ -639,7 +794,7 @@ def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
     <div class="workflow-header">
       <div class="verdict">
         <h2>{html.escape(workflow.symbol)}: Workflow gestart</h2>
-        <p>Lokale data ontbreekt nog. Er staat nu een concept-snapshot klaar voor brondata, cijfers en casustekst.</p>
+        <p>Het conceptbestand bewaart opgehaalde cijfers, brondata en de resterende handmatige controlepunten.</p>
       </div>
       <div class="metric">
         <span class="metric-label">Status</span>

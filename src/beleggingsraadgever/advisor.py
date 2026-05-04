@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from .indicators import build_score, conviction_from_score, verdict_from_score
-from .models import AdviceReport, FinancialSnapshot, KnowledgeHit, MarketSnapshot
+from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeHit, MarketSnapshot
 from .storage import SQLiteRepository
 
 
@@ -17,17 +17,33 @@ class Advisor:
         normalized_symbol = symbol.upper()
         financial = self.repository.latest_financial_snapshot(normalized_symbol)
         market = self.repository.latest_market_snapshot(normalized_symbol)
+        return self.analyze_snapshots(normalized_symbol, financial, market)
+
+    def analyze_snapshots(
+        self,
+        symbol: str,
+        financial: FinancialSnapshot,
+        market: MarketSnapshot,
+        *,
+        data_sources: Optional[List[DataSource]] = None,
+        evidence: Optional[List[KnowledgeHit]] = None,
+        extra_assumptions: Optional[List[str]] = None,
+        knowledge_label: str = "lokale index",
+    ) -> AdviceReport:
+        normalized_symbol = symbol.upper()
         score = build_score(financial, market)
         verdict = verdict_from_score(score)
         conviction = conviction_from_score(score)
-        evidence = self._retrieve_evidence(normalized_symbol, financial, market)
-        data_sources = self.repository.data_sources_for_symbol(normalized_symbol)
+        evidence = evidence if evidence is not None else self._retrieve_evidence(normalized_symbol, financial, market)
+        data_sources = (
+            data_sources if data_sources is not None else self.repository.data_sources_for_symbol(normalized_symbol)
+        )
 
         summary = self._build_summary(normalized_symbol, financial, market, verdict, score)
         data_freshness = {
             "koersdata": market.as_of,
             "fundamentals": f"{financial.period_type} t/m {financial.period_end}",
-            "kennisbank": "lokale index",
+            "kennisbank": knowledge_label,
         }
 
         assumptions = [
@@ -35,6 +51,8 @@ class Advisor:
             "Scores zijn v1-regels en vervangen nog geen definitief oordeel.",
             "Portefeuillefit wordt in een volgende stap verdiept met jouw actuele vermogensverdeling.",
         ]
+        if extra_assumptions:
+            assumptions = extra_assumptions + assumptions
 
         return AdviceReport(
             symbol=normalized_symbol,
