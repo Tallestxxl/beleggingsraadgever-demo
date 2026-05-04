@@ -201,6 +201,12 @@ class WebTests(unittest.TestCase):
             self.assertEqual(data["principles"][0]["title"], "APERAM: Aperam cyclische staalcasus")
             self.assertNotIn("TODO", data["principles"][0]["statement"])
 
+            html = build_page(symbol="APERAM", workflow=workflow)
+            self.assertIn("Klaar voor import", html)
+            self.assertIn("Workflowmeldingen", html)
+            self.assertIn("Alle validatiepunten zijn opgelost", html)
+            self.assertIn("button type=\"submit\">Importeer snapshot</button>", html)
+
 
 def _fake_web_stockanalysis_lookup_fetch(url: str) -> str:
     if "symbol-lookup" in url:

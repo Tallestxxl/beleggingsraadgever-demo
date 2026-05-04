@@ -945,6 +945,11 @@ def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
     if not errors:
         errors = "<li>Geen validatiefouten gevonden.</li>"
     import_disabled = "" if workflow.can_import else " disabled"
+    action_hint = (
+        "Alle validatiepunten zijn opgelost. Importeer de snapshot om dit aandeel voortaan als reguliere analyse te gebruiken."
+        if workflow.can_import
+        else "Vul de resterende validatiepunten aan voordat de snapshot definitief kan worden geïmporteerd."
+    )
 
     return f"""
     <div class="workflow-header">
@@ -964,7 +969,7 @@ def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
           <p class="evidence-meta">{html.escape(status)}</p>
           <code class="code-path">{html.escape(str(workflow.path))}</code>
         </section>
-        {f'<section><h3>Datacollector</h3><ul class="workflow-list">{messages}</ul></section>' if messages else ''}
+        {f'<section><h3>Workflowmeldingen</h3><ul class="workflow-list">{messages}</ul></section>' if messages else ''}
         <section>
           <h3>Validatie</h3>
           <ul class="workflow-list">{errors}</ul>
@@ -974,6 +979,7 @@ def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
         {render_case_note_form(workflow)}
         <section>
           <h3>Acties</h3>
+          <p class="evidence-meta">{html.escape(action_hint)}</p>
           <div class="button-row">
             <a class="button secondary" href="/workflow?symbol={html.escape(workflow.symbol)}">Controleer opnieuw</a>
             <form method="post" action="/workflow/collect">
