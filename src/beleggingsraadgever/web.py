@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .advisor import Advisor
 from .models import AdviceReport
+from .real_data import seed_besi
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
 
@@ -313,6 +314,7 @@ def serve(
     repository.init()
     if seed:
         seed_demo(repository)
+        seed_besi(repository)
 
     handler = _make_handler(repository)
     server = ThreadingHTTPServer((host, port), handler)
@@ -515,4 +517,3 @@ def render_evidence_item(hit) -> str:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
