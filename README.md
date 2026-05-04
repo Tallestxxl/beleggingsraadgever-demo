@@ -32,6 +32,18 @@ Aanbevolen lokaal gebruik:
 /bin/sh scripts/demo
 ```
 
+Webinterface:
+
+```bash
+/bin/sh scripts/web
+```
+
+Open daarna:
+
+```text
+http://127.0.0.1:8765
+```
+
 Losse stappen kunnen ook:
 
 ```bash

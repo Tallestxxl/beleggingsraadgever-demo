@@ -8,6 +8,7 @@ from pathlib import Path
 from .advisor import Advisor
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
+from .web import serve
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -30,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     analyze = subparsers.add_parser("analyze", help="Analyze a symbol with local data")
     analyze.add_argument("symbol")
+
+    serve_parser = subparsers.add_parser("serve", help="Start the local web interface")
+    serve_parser.add_argument("--host", default="127.0.0.1")
+    serve_parser.add_argument("--port", type=int, default=8765)
+    serve_parser.add_argument("--no-seed", action="store_true", help="Do not load demo data on startup")
 
     return parser
 
@@ -76,6 +82,10 @@ def main(argv: list[str] | None = None) -> int:
         advisor = Advisor(repository)
         report = advisor.analyze(args.symbol)
         print(advisor.render_markdown(report))
+        return 0
+
+    if args.command == "serve":
+        serve(repository.db_path, host=args.host, port=args.port, seed=not args.no_seed)
         return 0
 
     parser.error(f"Unknown command: {args.command}")
