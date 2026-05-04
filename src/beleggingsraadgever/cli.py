@@ -6,6 +6,7 @@ import argparse
 from pathlib import Path
 
 from .advisor import Advisor
+from .importer import import_company_snapshot
 from .real_data import seed_besi
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
@@ -30,6 +31,9 @@ def build_parser() -> argparse.ArgumentParser:
     import_text.add_argument("--author")
     import_text.add_argument("--date")
     import_text.add_argument("--tag", action="append", default=[])
+
+    import_snapshot = subparsers.add_parser("import-snapshot", help="Import a curated company JSON snapshot")
+    import_snapshot.add_argument("path", help="Path to company snapshot JSON")
 
     analyze = subparsers.add_parser("analyze", help="Analyze a symbol with local data")
     analyze.add_argument("symbol")
@@ -82,6 +86,11 @@ def main(argv: list[str] | None = None) -> int:
             tags=args.tag,
         )
         print(f"Imported document {document_id}: {args.title}")
+        return 0
+
+    if args.command == "import-snapshot":
+        symbol = import_company_snapshot(repository, Path(args.path))
+        print(f"Imported company snapshot for {symbol}: {repository.db_path}")
         return 0
 
     if args.command == "analyze":
