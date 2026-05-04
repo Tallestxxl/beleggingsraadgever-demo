@@ -5,17 +5,37 @@ from __future__ import annotations
 import argparse
 import html
 import json
+from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 from .advisor import Advisor
+from .importer import (
+    SnapshotValidationError,
+    import_company_snapshot,
+    load_company_snapshot,
+    validate_company_snapshot,
+    write_snapshot_template,
+)
 from .models import AdviceReport
-from .real_data import seed_curated_snapshots
+from .real_data import DRAFTS_DIR, seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
+
+
+@dataclass(frozen=True)
+class SnapshotWorkflow:
+    symbol: str
+    path: Path
+    created: bool
+    errors: list[str]
+
+    @property
+    def can_import(self) -> bool:
+        return not self.errors
 
 
 CSS = """
@@ -138,6 +158,39 @@ main {
   background: var(--surface);
   padding: 14px 16px;
   color: var(--ink);
+}
+
+.workflow-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 18px;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+button:disabled {
+  border-color: var(--line);
+  background: var(--surface-soft);
+  color: var(--muted);
+  cursor: default;
+}
+
+.code-path {
+  display: block;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  padding: 10px;
+  color: var(--ink);
+  font-size: 13px;
 }
 
 .report-header {
@@ -297,7 +350,8 @@ h3 {
 .data-list,
 .source-list,
 .assumption-list,
-.risk-list {
+.risk-list,
+.workflow-list {
   color: var(--muted);
   font-size: 14px;
 }
@@ -322,6 +376,7 @@ li + li {
 @media (max-width: 860px) {
   .topbar-inner,
   .ticker-form,
+  .workflow-header,
   .report-header,
   .grid {
     grid-template-columns: 1fr;
@@ -379,7 +434,7 @@ def _make_handler(repository: SQLiteRepository):
             if parsed.path == "/health":
                 self._send_json({"ok": True})
                 return
-            if parsed.path not in {"/", "/analyze"}:
+            if parsed.path not in {"/", "/analyze", "/workflow"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
 
@@ -387,14 +442,53 @@ def _make_handler(repository: SQLiteRepository):
             symbol = params.get("symbol", ["DEMO"])[0].strip().upper() or "DEMO"
             report = None
             error = None
+            workflow = None
 
-            if parsed.path == "/analyze" or parsed.query:
+            if parsed.path == "/workflow":
+                workflow = ensure_snapshot_workflow(symbol)
+            elif parsed.path == "/analyze" or parsed.query:
                 try:
                     report = Advisor(repository).analyze(symbol)
                 except LookupError:
-                    error = f"Geen lokale data gevonden voor {symbol}. Probeer DEMO of importeer eerst data."
+                    workflow = ensure_snapshot_workflow(symbol)
 
-            self._send_html(build_page(symbol=symbol, report=report, error=error))
+            self._send_html(build_page(symbol=symbol, report=report, error=error, workflow=workflow))
+
+        def do_POST(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path != "/workflow/import":
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+
+            body_length = int(self.headers.get("Content-Length", "0"))
+            body = self.rfile.read(body_length).decode("utf-8")
+            params = parse_qs(body)
+            symbol = params.get("symbol", [""])[0].strip().upper()
+            if not symbol:
+                self._send_html(build_page(error="Geen ticker ontvangen."))
+                return
+
+            workflow = ensure_snapshot_workflow(symbol)
+            if workflow.errors:
+                self._send_html(
+                    build_page(
+                        symbol=symbol,
+                        workflow=workflow,
+                        error="Snapshot is nog niet importeerbaar.",
+                    )
+                )
+                return
+
+            try:
+                import_company_snapshot(repository, workflow.path)
+            except SnapshotValidationError as validation_error:
+                workflow = SnapshotWorkflow(symbol=symbol, path=workflow.path, created=False, errors=validation_error.errors)
+                self._send_html(build_page(symbol=symbol, workflow=workflow, error="Snapshot is nog niet importeerbaar."))
+                return
+
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", f"/analyze?symbol={quote_plus(symbol)}")
+            self.end_headers()
 
         def log_message(self, format: str, *args) -> None:  # noqa: A002
             return
@@ -418,10 +512,18 @@ def _make_handler(repository: SQLiteRepository):
     return Handler
 
 
-def build_page(symbol: str = "DEMO", report: Optional[AdviceReport] = None, error: Optional[str] = None) -> str:
+def build_page(
+    symbol: str = "DEMO",
+    report: Optional[AdviceReport] = None,
+    error: Optional[str] = None,
+    workflow: Optional[SnapshotWorkflow] = None,
+) -> str:
     escaped_symbol = html.escape(symbol)
     content = ""
-    if error:
+    if workflow:
+        notice = f'<div class="notice">{html.escape(error)}</div>' if error else ""
+        content = notice + render_snapshot_workflow(workflow)
+    elif error:
         content = f'<div class="notice">{html.escape(error)}</div>'
     elif report:
         content = render_report(report)
@@ -456,6 +558,86 @@ def build_page(symbol: str = "DEMO", report: Optional[AdviceReport] = None, erro
   </div>
 </body>
 </html>"""
+
+
+def ensure_snapshot_workflow(symbol: str, drafts_dir: Path = DRAFTS_DIR) -> SnapshotWorkflow:
+    normalized_symbol = symbol.strip().upper()
+    path = drafts_dir / f"{normalized_symbol.lower()}.json"
+    created = False
+    if not path.exists():
+        write_snapshot_template(normalized_symbol, path)
+        created = True
+    errors = validate_snapshot_file(path)
+    return SnapshotWorkflow(symbol=normalized_symbol, path=path, created=created, errors=errors)
+
+
+def validate_snapshot_file(path: Path) -> list[str]:
+    try:
+        return validate_company_snapshot(load_company_snapshot(path))
+    except SnapshotValidationError as error:
+        return error.errors
+    except json.JSONDecodeError as error:
+        return [f"Snapshot JSON is ongeldig: {error.msg} op regel {error.lineno}."]
+    except OSError as error:
+        return [f"Snapshotbestand kan niet worden gelezen: {error}."]
+
+
+def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
+    status = "Concept aangemaakt" if workflow.created else "Concept gevonden"
+    status_detail = "Klaar voor import" if workflow.can_import else f"{len(workflow.errors)} punten open"
+    visible_errors = workflow.errors[:24]
+    hidden_count = max(0, len(workflow.errors) - len(visible_errors))
+    errors = "".join(f"<li>{html.escape(error)}</li>" for error in visible_errors)
+    if hidden_count:
+        errors += f"<li>Nog {hidden_count} extra punten. Gebruik de validator voor de volledige lijst.</li>"
+    if not errors:
+        errors = "<li>Geen validatiefouten gevonden.</li>"
+    import_disabled = "" if workflow.can_import else " disabled"
+
+    return f"""
+    <div class="workflow-header">
+      <div class="verdict">
+        <h2>{html.escape(workflow.symbol)}: Workflow gestart</h2>
+        <p>Lokale data ontbreekt nog. Er staat nu een concept-snapshot klaar voor brondata, cijfers en casustekst.</p>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Status</span>
+        <span class="metric-value">{html.escape(status_detail)}</span>
+      </div>
+    </div>
+    <div class="grid">
+      <div>
+        <section>
+          <h3>Conceptbestand</h3>
+          <p class="evidence-meta">{html.escape(status)}</p>
+          <code class="code-path">{html.escape(str(workflow.path))}</code>
+        </section>
+        <section>
+          <h3>Validatie</h3>
+          <ul class="workflow-list">{errors}</ul>
+        </section>
+      </div>
+      <div>
+        <section>
+          <h3>Acties</h3>
+          <div class="button-row">
+            <a class="button secondary" href="/workflow?symbol={html.escape(workflow.symbol)}">Controleer opnieuw</a>
+            <form method="post" action="/workflow/import">
+              <input type="hidden" name="symbol" value="{html.escape(workflow.symbol)}">
+              <button type="submit"{import_disabled}>Importeer snapshot</button>
+            </form>
+          </div>
+        </section>
+        <section>
+          <h3>Bronnen</h3>
+          <ul class="workflow-list">
+            <li>Jaarverslag of kwartaalbericht voor omzet, marges, kasstroom, schuld en kapitaalallocatie.</li>
+            <li>Koers- en waarderingsbron voor slotkoers, multiple, FCF-yield, dividendrendement en momentum.</li>
+            <li>Een korte casustekst met concurrentiepositie, cycliciteit, managementsignalen en risico.</li>
+          </ul>
+        </section>
+      </div>
+    </div>"""
 
 
 def render_report(report: AdviceReport) -> str:
