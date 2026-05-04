@@ -94,6 +94,7 @@ class ScoreBreakdown:
     risk: float
     total: float
     flags: List[str] = field(default_factory=list)
+    details: Dict[str, List[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -106,4 +107,3 @@ class AdviceReport:
     evidence: List[KnowledgeHit]
     data_freshness: Dict[str, str]
     assumptions: List[str] = field(default_factory=list)
-

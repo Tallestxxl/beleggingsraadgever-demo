@@ -36,6 +36,8 @@ class IndicatorTests(unittest.TestCase):
         score = build_score(financial, market)
         self.assertGreater(score.total, 65)
         self.assertIn(verdict_from_score(score), {"Kopen op zwakte", "Koopwaardig"})
+        self.assertIn("quality", score.details)
+        self.assertTrue(any("Operationele marge" in item for item in score.details["quality"]))
 
     def test_negative_fcf_creates_risk_flag(self) -> None:
         financial = FinancialSnapshot(
@@ -59,8 +61,8 @@ class IndicatorTests(unittest.TestCase):
         score = build_score(financial, market)
         self.assertIn("Negatieve vrije kasstroom", score.flags)
         self.assertLess(score.total, 55)
+        self.assertTrue(any("Hoge multiple" in item for item in score.details["risk"]))
 
 
 if __name__ == "__main__":
     unittest.main()
-

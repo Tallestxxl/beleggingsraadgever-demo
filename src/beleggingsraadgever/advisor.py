@@ -91,6 +91,23 @@ class Advisor:
         lines.extend(["", "## Dataversheid", ""])
         lines.extend(f"- {name}: {value}" for name, value in report.data_freshness.items())
 
+        if report.score.details:
+            lines.extend(["", "## Score-uitleg", ""])
+            labels = {
+                "quality": "Bedrijfskwaliteit",
+                "valuation": "Waardering",
+                "momentum": "Momentum",
+                "risk": "Risico",
+                "total": "Totaalscore",
+            }
+            for key in ("quality", "valuation", "momentum", "risk", "total"):
+                details = report.score.details.get(key, [])
+                if not details:
+                    continue
+                lines.extend([f"### {labels[key]}", ""])
+                lines.extend(f"- {detail}" for detail in details)
+                lines.append("")
+
         lines.extend(["", "## Aannames", ""])
         lines.extend(f"- {assumption}" for assumption in report.assumptions)
         lines.append("")
@@ -141,4 +158,3 @@ class Advisor:
         if score.flags:
             parts.append("Belangrijkste aandachtspunt: " + "; ".join(score.flags) + ".")
         return " ".join(parts)
-

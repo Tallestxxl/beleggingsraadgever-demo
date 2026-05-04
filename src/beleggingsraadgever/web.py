@@ -220,6 +220,16 @@ h3 {
   gap: 12px;
 }
 
+.score-block {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.score-block:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
 .score-row {
   display: grid;
   grid-template-columns: 150px minmax(120px, 1fr) 56px;
@@ -238,6 +248,21 @@ h3 {
   display: block;
   height: 100%;
   background: var(--accent);
+}
+
+.score-detail {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.score-detail summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.score-detail ul {
+  margin-top: 8px;
 }
 
 .evidence-list {
@@ -466,11 +491,13 @@ def render_report(report: AdviceReport) -> str:
       <div>
         <section>
           <h3>Scorekaart</h3>
+          <p class="evidence-meta">Alle deelscores lopen van 0 tot 100. De totaalscore gebruikt vaste v1-gewichten.</p>
           <div class="score-list">
-            {render_score_row("Bedrijfskwaliteit", report.score.quality)}
-            {render_score_row("Waardering", report.score.valuation)}
-            {render_score_row("Momentum", report.score.momentum)}
-            {render_score_row("Risico", report.score.risk)}
+            {render_score_block("Bedrijfskwaliteit", report.score.quality, report.score.details.get("quality", []))}
+            {render_score_block("Waardering", report.score.valuation, report.score.details.get("valuation", []))}
+            {render_score_block("Momentum", report.score.momentum, report.score.details.get("momentum", []))}
+            {render_score_block("Risico", report.score.risk, report.score.details.get("risk", []))}
+            {render_score_block("Totaalscore", report.score.total, report.score.details.get("total", []))}
           </div>
         </section>
         {flags}
@@ -492,13 +519,24 @@ def render_report(report: AdviceReport) -> str:
     </div>"""
 
 
-def render_score_row(label: str, value: float) -> str:
+def render_score_block(label: str, value: float, details: list[str]) -> str:
     width = max(0.0, min(100.0, value))
+    detail_list = "".join(f"<li>{html.escape(detail)}</li>" for detail in details)
+    detail_html = ""
+    if detail_list:
+        detail_html = f"""
+      <details class="score-detail">
+        <summary>Toon berekening</summary>
+        <ul>{detail_list}</ul>
+      </details>"""
     return f"""
-    <div class="score-row">
-      <span>{html.escape(label)}</span>
-      <div class="bar" aria-hidden="true"><span style="width: {width:.1f}%"></span></div>
-      <strong>{value:.1f}</strong>
+    <div class="score-block">
+      <div class="score-row">
+        <span>{html.escape(label)}</span>
+        <div class="bar" aria-hidden="true"><span style="width: {width:.1f}%"></span></div>
+        <strong>{value:.1f}</strong>
+      </div>
+      {detail_html}
     </div>"""
 
 
