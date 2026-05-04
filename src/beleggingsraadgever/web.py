@@ -256,13 +256,21 @@ h3 {
   font-size: 13px;
 }
 
-.score-detail summary {
+.score-detail summary,
+.supporting-detail summary {
   cursor: pointer;
   font-weight: 700;
 }
 
-.score-detail ul {
+.score-detail ul,
+.supporting-detail .source-list {
   margin-top: 8px;
+}
+
+.supporting-detail summary {
+  color: var(--ink);
+  font-size: 17px;
+  letter-spacing: 0;
 }
 
 .evidence-list {
@@ -516,8 +524,10 @@ def render_report(report: AdviceReport) -> str:
           <ul class="data-list">{freshness}</ul>
         </section>
         <section>
-          <h3>Bronnen per cijfer</h3>
-          <div class="source-list">{sources}</div>
+          <details class="supporting-detail">
+            <summary>Bronnen per cijfer</summary>
+            <div class="source-list">{sources}</div>
+          </details>
         </section>
         <section>
           <h3>Aannames</h3>
