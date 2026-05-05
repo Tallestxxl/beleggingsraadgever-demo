@@ -1600,6 +1600,19 @@ def render_report(report: AdviceReport) -> str:
     if report.portfolio_fit:
         fit = report.portfolio_fit
         notes = "".join(f"<li>{html.escape(note)}</li>" for note in fit.notes)
+        classification_rows = ""
+        if fit.sector != "Onbekend":
+            classification_rows += (
+                f"<li>Sector {html.escape(fit.sector)}: "
+                f"{html.escape(format_percent(fit.sector_weight))} van effecten</li>"
+            )
+        if fit.theme != "Onbekend":
+            classification_rows += (
+                f"<li>Thema {html.escape(fit.theme)}: "
+                f"{html.escape(format_percent(fit.theme_weight))} van effecten</li>"
+            )
+        if not classification_rows:
+            classification_rows = "<li>Sector/thema: nog niet geclassificeerd.</li>"
         portfolio_fit = f"""
         <section>
           <h3>Portefeuillefit</h3>
@@ -1609,8 +1622,7 @@ def render_report(report: AdviceReport) -> str:
             <li>Gewicht positie: {html.escape(format_percent(fit.position_weight))}</li>
             <li>Richtmaximum: {html.escape(format_percent(fit.max_weight))}</li>
             <li>Ruimte tot richtmaximum: {html.escape(format_eur(fit.room_to_max))}</li>
-            <li>Sector {html.escape(fit.sector)}: {html.escape(format_percent(fit.sector_weight))} van effecten</li>
-            <li>Thema {html.escape(fit.theme)}: {html.escape(format_percent(fit.theme_weight))} van effecten</li>
+            {classification_rows}
           </ul>
           <ul class="assumption-list">{notes}</ul>
         </section>"""

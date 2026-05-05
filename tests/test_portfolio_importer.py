@@ -44,6 +44,7 @@ Aandelen,"","","","","","","","",""
     def test_normalize_broker_name_uses_known_aliases_and_fallback(self) -> None:
         self.assertEqual(normalize_broker_name("ASML  HOLDING"), "ASML")
         self.assertEqual(normalize_broker_name("ASMI"), "ASMI")
+        self.assertEqual(normalize_broker_name("BP"), "BP")
         self.assertEqual(normalize_broker_name("BAM GROEP /KON/"), "BAMNB")
         self.assertEqual(normalize_broker_name("Onbekend Fonds Naam"), "ONBEKEND_FONDS_NAAM")
 

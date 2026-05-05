@@ -22,6 +22,7 @@ CLASSIFICATION_BY_SYMBOL = {
     "AVTX": ("Materials", "Biobased materials"),
     "BAMNB": ("Industrials", "Construction"),
     "BESI": ("Semiconductors", "Semiconductor equipment"),
+    "BP": ("Energy", "Oil and gas"),
     "CRBN": ("Consumer Staples", "Ingredients"),
     "DSFIR": ("Consumer Staples", "Health and nutrition"),
     "EBUS": ("Industrials", "Energy transition"),

@@ -137,10 +137,14 @@ class Advisor:
                     f"- Gewicht positie: {fit.position_weight:.1%}",
                     f"- Richtmaximum: {fit.max_weight:.1%}",
                     f"- Ruimte tot richtmaximum: EUR {fit.room_to_max:,.0f}",
-                    f"- Sector {fit.sector}: {fit.sector_weight:.1%} van effecten",
-                    f"- Thema {fit.theme}: {fit.theme_weight:.1%} van effecten",
                 ]
             )
+            if fit.sector != "Onbekend":
+                lines.append(f"- Sector {fit.sector}: {fit.sector_weight:.1%} van effecten")
+            if fit.theme != "Onbekend":
+                lines.append(f"- Thema {fit.theme}: {fit.theme_weight:.1%} van effecten")
+            if fit.sector == "Onbekend" and fit.theme == "Onbekend":
+                lines.append("- Sector/thema: nog niet geclassificeerd.")
             lines.extend(f"- {note}" for note in fit.notes)
 
         if report.score.details:

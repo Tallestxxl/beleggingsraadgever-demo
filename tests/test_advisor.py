@@ -99,6 +99,20 @@ class AdvisorTests(unittest.TestCase):
             self.assertIn("Sectorconcentratie", " ".join(report.portfolio_fit.notes))
             self.assertIn("Semiconductors", report.portfolio_fit.summary)
 
+    def test_bp_is_classified_as_energy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+
+            report = Advisor(repo).analyze_snapshots(
+                "BP",
+                FinancialSnapshot(symbol="BP", period_end="2025-12-31", period_type="TTM", revenue=1_000_000_000),
+                MarketSnapshot(symbol="BP", as_of="2026-05-05", close_price=5, currency="GBP"),
+            )
+
+            self.assertEqual(report.portfolio_fit.sector, "Energy")
+            self.assertEqual(report.portfolio_fit.theme, "Oil and gas")
+
 
 if __name__ == "__main__":
     unittest.main()
