@@ -169,6 +169,53 @@ class WebTests(unittest.TestCase):
             self.assertIn("Slotkoers EUR 12.35", html)
             self.assertNotIn("pe_ratio: TODO", html)
 
+    def test_draft_report_stores_classification_from_company_description(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bp.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "symbol": "BP",
+                        "financial_snapshot": {
+                            "period_end": "2025-12-31",
+                            "period_type": "TTM",
+                            "revenue": 1_000_000_000,
+                        },
+                        "market_snapshot": {
+                            "as_of": "2026-05-05",
+                            "close_price": 5,
+                            "currency": "GBP",
+                        },
+                        "documents": [
+                            {
+                                "title": "BP automatisch opgehaalde marktdata",
+                                "source_type": "public_market_data",
+                                "publication_date": "2026-05-05",
+                                "raw_text": (
+                                    "BP is an integrated energy company engaged in the oil and gas business worldwide."
+                                ),
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            workflow = SnapshotWorkflow(symbol="BP", path=path, created=False, errors=[], messages=[])
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+
+            report = build_draft_report(repo, workflow)
+            stored = repo.portfolio_classification("BP")
+
+            self.assertIsNotNone(report)
+            self.assertIsNotNone(stored)
+            self.assertEqual(stored.sector, "Energy")
+            self.assertEqual(stored.theme, "Oil and gas")
+            self.assertEqual(report.portfolio_fit.sector, "Energy")
+            self.assertEqual(report.portfolio_fit.theme, "Oil and gas")
+
     def test_case_note_replaces_todo_principle_and_makes_collected_draft_importable(self) -> None:
         import tempfile
 

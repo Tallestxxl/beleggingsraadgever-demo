@@ -7,7 +7,9 @@ import hashlib
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .classification import classify_company
 from .models import DataSource, FinancialSnapshot, MarketSnapshot, Principle
+from .models import PortfolioClassification
 from .storage import SQLiteRepository
 
 
@@ -80,6 +82,7 @@ def import_company_snapshot(repository: SQLiteRepository, path: Path) -> str:
     _import_data_sources(repository, symbol, data.get("data_sources", []))
     document_ids = _import_documents(repository, data.get("documents", []))
     _import_principles(repository, document_ids, data.get("principles", []))
+    _import_classification(repository, symbol, data)
     repository.record_snapshot_import(
         symbol=symbol,
         imported_from=str(snapshot_path),
@@ -269,6 +272,38 @@ def _import_principles(
                 source_document_id=document_ids.get(source_title) if source_title else None,
             )
         )
+
+
+def _import_classification(repository: SQLiteRepository, symbol: str, data: Dict[str, Any]) -> None:
+    classification_data = data.get("classification") if isinstance(data.get("classification"), dict) else {}
+    sector = classification_data.get("sector")
+    theme = classification_data.get("theme")
+    if _classification_value_missing(sector) or _classification_value_missing(theme):
+        description = _snapshot_description_text(data)
+        inferred = classify_company(symbol, description=description)
+        sector = inferred.sector if _classification_value_missing(sector) else sector
+        theme = inferred.theme if _classification_value_missing(theme) else theme
+    if _classification_value_missing(sector) and _classification_value_missing(theme):
+        return
+    repository.upsert_portfolio_classification(
+        PortfolioClassification(symbol=symbol, sector=str(sector), theme=str(theme))
+    )
+
+
+def _classification_value_missing(value: Any) -> bool:
+    return not _is_nonempty_string(value) or str(value).strip() == "Onbekend"
+
+
+def _snapshot_description_text(data: Dict[str, Any]) -> str:
+    documents = data.get("documents", [])
+    if not isinstance(documents, list):
+        return ""
+    texts = [
+        str(document.get("raw_text") or "")
+        for document in documents
+        if isinstance(document, dict) and document.get("raw_text")
+    ]
+    return " ".join(texts)
 
 
 def _data_source_template(field_name: str) -> Dict[str, str]:

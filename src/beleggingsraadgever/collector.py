@@ -16,6 +16,7 @@ from urllib.error import URLError
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
+from .classification import classify_company
 from .importer import load_company_snapshot, validate_company_snapshot, write_snapshot_template
 from .real_data import DRAFTS_DIR
 
@@ -255,6 +256,20 @@ def update_snapshot_with_market_data(path: Path, market_data: MarketData) -> Lis
     if market_data.volatility_1y is not None:
         market["volatility_1y"] = round(market_data.volatility_1y, 4)
         updated_fields.append("volatility_1y")
+
+    classification = classify_company(
+        str(data.get("symbol", "")).upper(),
+        company_name=market_data.company_name,
+        description=market_data.description,
+    )
+    if classification.sector != "Onbekend" or classification.theme != "Onbekend":
+        data["classification"] = {
+            "sector": classification.sector,
+            "theme": classification.theme,
+            "source": "public_company_description",
+            "source_url": market_data.source_url,
+        }
+        updated_fields.append("classification")
 
     data["data_sources"] = _merge_data_sources(
         data.get("data_sources", []),

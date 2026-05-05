@@ -99,10 +99,13 @@ class AdvisorTests(unittest.TestCase):
             self.assertIn("Sectorconcentratie", " ".join(report.portfolio_fit.notes))
             self.assertIn("Semiconductors", report.portfolio_fit.summary)
 
-    def test_bp_is_classified_as_energy(self) -> None:
+    def test_analyze_snapshots_uses_stored_classification(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")
             repo.init()
+            repo.upsert_portfolio_classification(
+                PortfolioClassification(symbol="BP", sector="Energy", theme="Oil and gas")
+            )
 
             report = Advisor(repo).analyze_snapshots(
                 "BP",

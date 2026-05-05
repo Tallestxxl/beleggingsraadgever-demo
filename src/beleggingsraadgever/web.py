@@ -24,7 +24,7 @@ from .importer import (
     write_snapshot_template,
 )
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
-from .classification import classify_symbol
+from .classification import classify_company, classify_symbol
 from .models import InvestorProfile, PortfolioAsset, PortfolioClassification, PortfolioPosition
 from .portfolio import exposure_buckets, portfolio_position_exposures
 from .portfolio_importer import import_portfolio_csv
@@ -1262,6 +1262,7 @@ def build_draft_report(repository: SQLiteRepository, workflow: SnapshotWorkflow)
     except (KeyError, TypeError, ValueError, SnapshotValidationError, json.JSONDecodeError, OSError):
         return None
 
+    _store_snapshot_classification(repository, workflow.symbol, snapshot)
     return Advisor(repository).analyze_snapshots(
         workflow.symbol,
         financial,
@@ -1274,6 +1275,30 @@ def build_draft_report(repository: SQLiteRepository, workflow: SnapshotWorkflow)
         ],
         knowledge_label="conceptbestand",
     )
+
+
+def _store_snapshot_classification(repository: SQLiteRepository, symbol: str, snapshot: dict) -> None:
+    classification_data = snapshot.get("classification") if isinstance(snapshot.get("classification"), dict) else {}
+    sector = classification_data.get("sector")
+    theme = classification_data.get("theme")
+    if _classification_value_missing(sector) or _classification_value_missing(theme):
+        description = " ".join(
+            str(document.get("raw_text") or "")
+            for document in snapshot.get("documents", [])
+            if isinstance(document, dict)
+        )
+        classification = classify_company(symbol, description=description)
+        sector = classification.sector if _classification_value_missing(sector) else sector
+        theme = classification.theme if _classification_value_missing(theme) else theme
+    if _classification_value_missing(sector) and _classification_value_missing(theme):
+        return
+    repository.upsert_portfolio_classification(
+        PortfolioClassification(symbol=symbol, sector=str(sector), theme=str(theme))
+    )
+
+
+def _classification_value_missing(value: object) -> bool:
+    return not str(value or "").strip() or str(value).strip() == "Onbekend"
 
 
 def validate_snapshot_file(path: Path) -> list[str]:
