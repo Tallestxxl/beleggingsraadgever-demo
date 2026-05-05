@@ -1711,6 +1711,9 @@ def render_report(report: AdviceReport) -> str:
         notes = "".join(f"<li>{html.escape(note)}</li>" for note in fit.notes)
         buy_room_limits = "".join(f"<li>{html.escape(item)}</li>" for item in fit.buy_room_limits)
         buy_room_calculation = "".join(f"<li>{html.escape(item)}</li>" for item in fit.buy_room_calculation)
+        transaction_rationale = "".join(
+            f"<li>{html.escape(item)}</li>" for item in fit.transaction_rationale
+        )
         classification_rows = ""
         if fit.sector != "Onbekend":
             classification_rows += (
@@ -1728,6 +1731,7 @@ def render_report(report: AdviceReport) -> str:
         <section>
           <h3>Portefeuillefit</h3>
           <p class="summary">{html.escape(fit.summary)}</p>
+          {f'<p class="evidence-title">Waarom dit transactieadvies?</p><ul class="data-list">{transaction_rationale}</ul>' if transaction_rationale else ''}
           <ul class="data-list">
             <li>Transactieadvies: <strong>{html.escape(fit.transaction_label)}</strong></li>
             <li>Huidige waarde positie: {html.escape(format_eur(fit.position_value))}</li>

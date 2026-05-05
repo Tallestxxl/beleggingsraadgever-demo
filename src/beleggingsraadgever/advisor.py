@@ -158,6 +158,8 @@ class Advisor:
             if fit.sector == "Onbekend" and fit.theme == "Onbekend":
                 lines.append("- Sector/thema: nog niet geclassificeerd.")
             lines.append(f"- Transactieadvies: {fit.transaction_label}")
+            if fit.transaction_rationale:
+                lines.extend(f"- Waarom dit transactieadvies: {line}" for line in fit.transaction_rationale)
             if fit.buy_room_calculation:
                 lines.extend(f"- Berekening koopruimte: {line}" for line in fit.buy_room_calculation)
             if fit.buy_room_limits:
@@ -310,6 +312,26 @@ class Advisor:
             theme_name=classification.theme,
             theme_concentrated=classification.theme != "Onbekend" and theme_weight >= THEME_WARNING_THRESHOLD,
         )
+        transaction_rationale = _transaction_rationale(
+            transaction_label=TRANSACTION_LABELS[transaction_action],
+            score_total=score.total,
+            risk_score=score.risk,
+            target_value=target_value,
+            position_weight=position_weight,
+            risk_profile=risk_profile,
+            max_weight=max_weight,
+            total_wealth=total_wealth,
+            sector_name=classification.sector,
+            sector_weight=sector_weight,
+            theme_name=classification.theme,
+            theme_weight=theme_weight,
+            cash_value=cash_value,
+            cash_buffer=cash_buffer,
+            available_cash=available_cash,
+            max_new_buy_amount=buy_room["max_new_buy_amount"],
+            practical_buy_amount=buy_room["practical_buy_amount"],
+            buy_room_limits=buy_room["limits"],
+        )
 
         return PortfolioFit(
             summary=summary,
@@ -335,6 +357,7 @@ class Advisor:
             theme_weight=theme_weight,
             buy_room_limits=buy_room["limits"],
             buy_room_calculation=buy_room["calculation"],
+            transaction_rationale=transaction_rationale,
             notes=notes,
         )
 
@@ -422,6 +445,75 @@ def _classification_symbol(
         if stored is not None and (stored.sector != "Onbekend" or stored.theme != "Onbekend"):
             return candidate
     return fallback_symbol
+
+
+def _transaction_rationale(
+    *,
+    transaction_label: str,
+    score_total: float,
+    risk_score: float,
+    target_value: float,
+    position_weight: float,
+    risk_profile: str,
+    max_weight: float,
+    total_wealth: float,
+    sector_name: str,
+    sector_weight: float,
+    theme_name: str,
+    theme_weight: float,
+    cash_value: Optional[float],
+    cash_buffer: Optional[float],
+    available_cash: Optional[float],
+    max_new_buy_amount: float,
+    practical_buy_amount: float,
+    buy_room_limits: List[str],
+) -> List[str]:
+    lines = [
+        f"{transaction_label}: totaalscore {score_total:.1f}/100 en risicoscore {risk_score:.1f}/100.",
+    ]
+    if target_value > 0:
+        lines.append(
+            f"Huidige positie {_format_eur_plain(target_value)} ({position_weight:.1%} van totaal vermogen); "
+            f"richtmaximum bij {risk_profile} profiel is {max_weight:.1%}."
+        )
+    else:
+        lines.append(
+            f"Geen bestaande positie; richtmaximum bij {risk_profile} profiel is {max_weight:.1%} "
+            f"van totaal vermogen {_format_eur_plain(total_wealth)}."
+        )
+
+    exposure_parts = []
+    if sector_name != "Onbekend":
+        exposure_parts.append(f"sector {sector_name} {sector_weight:.1%}")
+    if theme_name != "Onbekend":
+        exposure_parts.append(f"thema {theme_name} {theme_weight:.1%}")
+    if exposure_parts:
+        lines.append("Exposure binnen effecten: " + ", ".join(exposure_parts) + ".")
+    else:
+        lines.append("Sector/thema-exposure is nog onbekend.")
+
+    if available_cash is not None and cash_value is not None and cash_buffer is not None:
+        lines.append(
+            f"Beschikbare beleggingscash {_format_eur_plain(available_cash)} "
+            f"na cashbuffer {_format_eur_plain(cash_buffer)}; totaal vermogen {_format_eur_plain(total_wealth)}."
+        )
+    else:
+        lines.append(
+            f"Totaal vermogen {_format_eur_plain(total_wealth)}; cashbuffer of cashpositie ontbreekt nog."
+        )
+
+    if practical_buy_amount < max_new_buy_amount:
+        limiting_text = " ".join(buy_room_limits[:3])
+        lines.append(
+            f"Maximale koopruimte {_format_eur_plain(max_new_buy_amount)}, praktisch "
+            f"{_format_eur_plain(practical_buy_amount)} door: {limiting_text}"
+        )
+    else:
+        lines.append(
+            f"Praktische koopruimte {_format_eur_plain(practical_buy_amount)} "
+            f"binnen maximale koopruimte {_format_eur_plain(max_new_buy_amount)}."
+        )
+    return lines
 
 
 def _buy_room(

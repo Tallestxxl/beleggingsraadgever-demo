@@ -150,6 +150,7 @@ class PortfolioFit:
     theme_weight: float = 0.0
     buy_room_limits: List[str] = field(default_factory=list)
     buy_room_calculation: List[str] = field(default_factory=list)
+    transaction_rationale: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
 
 

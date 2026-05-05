@@ -264,6 +264,9 @@ class AdvisorTests(unittest.TestCase):
             self.assertEqual(report.portfolio_fit.max_new_buy_amount, 5000)
             self.assertEqual(report.portfolio_fit.practical_buy_amount, 5000)
             self.assertTrue(any("Beschikbare beleggingscash" in line for line in report.portfolio_fit.buy_room_calculation))
+            self.assertTrue(any("Kleine startpositie" in line for line in report.portfolio_fit.transaction_rationale))
+            self.assertTrue(any("cashbuffer" in line for line in report.portfolio_fit.transaction_rationale))
+            self.assertTrue(any("totaal vermogen" in line for line in report.portfolio_fit.transaction_rationale))
 
     def test_buy_room_is_capped_by_cash_above_buffer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

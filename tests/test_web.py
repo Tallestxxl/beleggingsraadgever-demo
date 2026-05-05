@@ -166,6 +166,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("FUGRO:", html)
             self.assertIn("Scorekaart", html)
             self.assertIn("Transactieadvies", html)
+            self.assertIn("Waarom dit transactieadvies?", html)
             self.assertIn("Maximale nieuwe koopruimte", html)
             self.assertIn("Toon koopruimte-berekening", html)
             self.assertIn("conceptbestand", html)
