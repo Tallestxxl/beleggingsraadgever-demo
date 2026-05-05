@@ -347,6 +347,10 @@ class WebTests(unittest.TestCase):
             csv_path = Path(tmp) / "portfolio.csv"
             csv_path.write_text(
                 """A VAN EGMOND | Depotnummer 41.70.77.300 | 05 may.26 | 11:25
+"Resultaten | Historisch"," 204.042,00" EUR
+"Ongerealiseerd resultaat"," 53.104" EUR
+"Gerealiseerd resultaat"," 116.714" EUR
+"Dividend en coupons"," 34.224" EUR
 Soort,Beleggen,Naam,Status,Aantal,Kostpr. per eenheid,Valuta kostpr. per eenheid,Opgebouwd vanaf,Koers,Valuta koers,Koers per,Marktwaarde, Valuta marktwaarde,Dividend / Coupons,Valuta Dividend / Coupons,Resultaat %,Resultaat EUR,
 ,"417077300","SHELL","Ongerealiseerd","ST  1.077"," 31,56","EUR","28-01-2022"," 38,32","EUR","28-01-2022"," 41.265","EUR"," 345","EUR"," 21,4 %"," 7.273",
 """,
@@ -356,9 +360,15 @@ Soort,Beleggen,Naam,Status,Aantal,Kostpr. per eenheid,Valuta kostpr. per eenheid
             repo.init()
 
             message = import_portfolio_csv_workflow(repo, {"csv_path": [str(csv_path)]})
+            html = build_portfolio_page(repo)
 
             self.assertIn("1 posities", message)
+            self.assertIn("historische samenvatting", message)
             self.assertEqual(repo.latest_portfolio_positions()[0].symbol, "SHELL")
+            self.assertIn("Historisch resultaat", html)
+            self.assertIn("EUR 204.042", html)
+            self.assertIn("EUR 7.273", html)
+            self.assertIn("EUR 345", html)
 
 
 def _fake_web_stockanalysis_lookup_fetch(url: str) -> str:

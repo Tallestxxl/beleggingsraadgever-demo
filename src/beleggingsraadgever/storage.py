@@ -18,7 +18,9 @@ from .models import (
     MarketSnapshot,
     PortfolioAsset,
     PortfolioClassification,
+    PortfolioPerformanceSummary,
     PortfolioPrice,
+    PortfolioPositionPerformance,
     PortfolioPosition,
     Principle,
 )
@@ -154,6 +156,35 @@ CREATE TABLE IF NOT EXISTS portfolio_prices (
   source TEXT NOT NULL DEFAULT 'portfolio_csv',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(symbol, as_of, source)
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_performance_summaries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  as_of TEXT NOT NULL,
+  period_label TEXT NOT NULL,
+  total_result REAL,
+  unrealized_result REAL,
+  realized_result REAL,
+  dividend_coupons REAL,
+  currency TEXT NOT NULL DEFAULT 'EUR',
+  source TEXT NOT NULL DEFAULT 'portfolio_csv',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(as_of, period_label, source)
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_position_performance (
+  symbol TEXT NOT NULL,
+  account TEXT NOT NULL,
+  as_of TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT '',
+  dividend_coupons REAL,
+  dividend_currency TEXT NOT NULL DEFAULT 'EUR',
+  result_pct REAL,
+  result_value REAL,
+  result_currency TEXT NOT NULL DEFAULT 'EUR',
+  source TEXT NOT NULL DEFAULT 'portfolio_csv',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(symbol, account, as_of, source)
 );
 
 CREATE TABLE IF NOT EXISTS portfolio_classifications (
@@ -576,6 +607,127 @@ class SQLiteRepository:
                 """,
                 (price.symbol.upper(), price.as_of, price.close_price, price.currency, price.source),
             )
+
+    def upsert_portfolio_performance_summary(self, summary: PortfolioPerformanceSummary) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO portfolio_performance_summaries (
+                  as_of, period_label, total_result, unrealized_result, realized_result,
+                  dividend_coupons, currency, source
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(as_of, period_label, source) DO UPDATE SET
+                  total_result=excluded.total_result,
+                  unrealized_result=excluded.unrealized_result,
+                  realized_result=excluded.realized_result,
+                  dividend_coupons=excluded.dividend_coupons,
+                  currency=excluded.currency,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    summary.as_of,
+                    summary.period_label,
+                    summary.total_result,
+                    summary.unrealized_result,
+                    summary.realized_result,
+                    summary.dividend_coupons,
+                    summary.currency,
+                    summary.source,
+                ),
+            )
+
+    def latest_portfolio_performance_summary(self) -> Optional[PortfolioPerformanceSummary]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT as_of, period_label, total_result, unrealized_result, realized_result,
+                       dividend_coupons, currency, source
+                FROM portfolio_performance_summaries
+                ORDER BY as_of DESC, updated_at DESC, id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        if row is None:
+            return None
+        return PortfolioPerformanceSummary(
+            as_of=row["as_of"],
+            period_label=row["period_label"],
+            total_result=row["total_result"],
+            unrealized_result=row["unrealized_result"],
+            realized_result=row["realized_result"],
+            dividend_coupons=row["dividend_coupons"],
+            currency=row["currency"],
+            source=row["source"],
+        )
+
+    def upsert_portfolio_position_performance(self, performance: PortfolioPositionPerformance) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO portfolio_position_performance (
+                  symbol, account, as_of, status, dividend_coupons, dividend_currency,
+                  result_pct, result_value, result_currency, source
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, account, as_of, source) DO UPDATE SET
+                  status=excluded.status,
+                  dividend_coupons=excluded.dividend_coupons,
+                  dividend_currency=excluded.dividend_currency,
+                  result_pct=excluded.result_pct,
+                  result_value=excluded.result_value,
+                  result_currency=excluded.result_currency,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    performance.symbol.upper(),
+                    performance.account,
+                    performance.as_of,
+                    performance.status,
+                    performance.dividend_coupons,
+                    performance.dividend_currency,
+                    performance.result_pct,
+                    performance.result_value,
+                    performance.result_currency,
+                    performance.source,
+                ),
+            )
+
+    def latest_portfolio_position_performances(self) -> List[PortfolioPositionPerformance]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT p.symbol, p.account, p.as_of, p.status, p.dividend_coupons,
+                       p.dividend_currency, p.result_pct, p.result_value,
+                       p.result_currency, p.source
+                FROM portfolio_position_performance p
+                JOIN (
+                  SELECT symbol, account, source, MAX(as_of) AS max_as_of
+                  FROM portfolio_position_performance
+                  GROUP BY symbol, account, source
+                ) latest
+                  ON latest.symbol = p.symbol
+                 AND latest.account = p.account
+                 AND latest.source = p.source
+                 AND latest.max_as_of = p.as_of
+                ORDER BY p.symbol, p.account
+                """
+            ).fetchall()
+        return [
+            PortfolioPositionPerformance(
+                symbol=row["symbol"],
+                account=row["account"],
+                as_of=row["as_of"],
+                status=row["status"],
+                dividend_coupons=row["dividend_coupons"],
+                dividend_currency=row["dividend_currency"],
+                result_pct=row["result_pct"],
+                result_value=row["result_value"],
+                result_currency=row["result_currency"],
+                source=row["source"],
+            )
+            for row in rows
+        ]
 
     def upsert_portfolio_classification(self, classification: PortfolioClassification) -> None:
         with self.connect() as conn:

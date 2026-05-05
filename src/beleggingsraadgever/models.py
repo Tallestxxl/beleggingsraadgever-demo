@@ -66,6 +66,32 @@ class PortfolioPrice:
 
 
 @dataclass(frozen=True)
+class PortfolioPerformanceSummary:
+    as_of: str
+    period_label: str
+    total_result: Optional[float] = None
+    unrealized_result: Optional[float] = None
+    realized_result: Optional[float] = None
+    dividend_coupons: Optional[float] = None
+    currency: str = "EUR"
+    source: str = "portfolio_csv"
+
+
+@dataclass(frozen=True)
+class PortfolioPositionPerformance:
+    symbol: str
+    account: str
+    as_of: str
+    status: str = ""
+    dividend_coupons: Optional[float] = None
+    dividend_currency: str = "EUR"
+    result_pct: Optional[float] = None
+    result_value: Optional[float] = None
+    result_currency: str = "EUR"
+    source: str = "portfolio_csv"
+
+
+@dataclass(frozen=True)
 class PortfolioClassification:
     symbol: str
     sector: str

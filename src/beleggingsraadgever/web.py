@@ -26,6 +26,7 @@ from .importer import (
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
 from .classification import classify_company, classify_symbol
 from .models import InvestorProfile, PortfolioAsset, PortfolioClassification, PortfolioPosition
+from .models import PortfolioPerformanceSummary, PortfolioPositionPerformance
 from .portfolio import exposure_buckets, portfolio_position_exposures
 from .portfolio_importer import import_portfolio_csv
 from .real_data import DRAFTS_DIR, PROCESSED_DIR, seed_curated_snapshots
@@ -758,7 +759,9 @@ def render_portfolio_dashboard(
     profile = repository.investor_profile()
     assets = repository.portfolio_assets()
     exposures = portfolio_position_exposures(repository)
-    positions = portfolio_position_rows(exposures)
+    performance_summary = repository.latest_portfolio_performance_summary()
+    position_performance = repository.latest_portfolio_position_performances()
+    positions = portfolio_position_rows(exposures, position_performance)
     securities_value = sum(row["market_value"] for row in positions)
     asset_value = sum(asset.value for asset in assets)
     total_value = securities_value + asset_value
@@ -799,6 +802,10 @@ def render_portfolio_dashboard(
           {render_allocation_table(assets, securities_value, total_value)}
         </section>
         <section>
+          <h3>Historisch resultaat</h3>
+          {render_performance_summary(performance_summary)}
+        </section>
+        <section>
           <h3>Sectorverdeling effecten</h3>
           {render_exposure_table(exposure_buckets(exposures, by="sector", total_wealth=total_value))}
         </section>
@@ -829,7 +836,7 @@ def render_csv_import_form() -> str:
           <form class="portfolio-form" method="post" action="/portfolio/import-csv">
             <div>
               <label for="csv-path">CSV-pad</label>
-              <input id="csv-path" name="csv_path" type="text" value="/Users/albertvanegmond/Downloads/Beleggen_report (2).csv">
+              <input id="csv-path" name="csv_path" type="text" value="/Users/albertvanegmond/Downloads/Beleggen_report (1).csv">
             </div>
             <button type="submit">Importeer CSV</button>
           </form>"""
@@ -948,6 +955,31 @@ def render_allocation_table(assets: list[PortfolioAsset], securities_value: floa
           </table>"""
 
 
+def render_performance_summary(summary: Optional[PortfolioPerformanceSummary]) -> str:
+    if summary is None:
+        return '<p class="evidence-meta">Nog geen historische resultaatgegevens geïmporteerd.</p>'
+    rows = [
+        ("Periode", summary.period_label),
+        ("Totaal resultaat", format_eur(summary.total_result)),
+        ("Ongerealiseerd resultaat", format_eur(summary.unrealized_result)),
+        ("Gerealiseerd resultaat", format_eur(summary.realized_result)),
+        ("Dividend en coupons", format_eur(summary.dividend_coupons)),
+        ("Peildatum", summary.as_of),
+    ]
+    body = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(label)}</td>
+          <td>{html.escape(value)}</td>
+        </tr>"""
+        for label, value in rows
+    )
+    return f"""
+          <table class="data-table">
+            <tbody>{body}</tbody>
+          </table>"""
+
+
 def render_positions_table(positions: list[dict]) -> str:
     if not positions:
         return '<p class="evidence-meta">Nog geen posities opgeslagen.</p>'
@@ -962,13 +994,15 @@ def render_positions_table(positions: list[dict]) -> str:
           <td>{format_eur(row["market_price"])}</td>
           <td>{format_eur(row["market_value"])}</td>
           <td>{format_percent(row["return_pct"]) if row["return_pct"] is not None else ""}</td>
+          <td>{format_eur(row["result_value"]) if row["result_value"] is not None else ""}</td>
+          <td>{format_eur(row["dividend_coupons"]) if row["dividend_coupons"] is not None else ""}</td>
         </tr>"""
         for row in positions
     )
     return f"""
           <table class="data-table">
             <thead>
-              <tr><th>Ticker</th><th>Sector</th><th>Thema</th><th>Aantal</th><th>Kostprijs</th><th>Laatste koers</th><th>Waarde</th><th>Resultaat</th></tr>
+              <tr><th>Ticker</th><th>Sector</th><th>Thema</th><th>Aantal</th><th>Kostprijs</th><th>Laatste koers</th><th>Waarde</th><th>Resultaat %</th><th>Resultaat EUR</th><th>Dividend/coupons</th></tr>
             </thead>
             <tbody>{body}</tbody>
           </table>"""
@@ -1046,10 +1080,18 @@ def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) ->
     return result.summary
 
 
-def portfolio_position_rows(exposures) -> list[dict]:
+def portfolio_position_rows(
+    exposures,
+    position_performance: list[PortfolioPositionPerformance] | None = None,
+) -> list[dict]:
+    performance_by_key = {
+        (performance.symbol.upper(), performance.account): performance
+        for performance in (position_performance or [])
+    }
     rows = []
     for exposure in exposures:
         position = exposure.position
+        performance = performance_by_key.get((position.symbol.upper(), position.account))
         rows.append(
             {
                 "symbol": position.symbol,
@@ -1060,7 +1102,9 @@ def portfolio_position_rows(exposures) -> list[dict]:
                 "average_cost": position.average_cost,
                 "market_price": exposure.market_price,
                 "market_value": exposure.market_value,
-                "return_pct": exposure.return_pct,
+                "return_pct": performance.result_pct if performance and performance.result_pct is not None else exposure.return_pct,
+                "result_value": performance.result_value if performance else None,
+                "dividend_coupons": performance.dividend_coupons if performance else None,
             }
         )
     return rows
