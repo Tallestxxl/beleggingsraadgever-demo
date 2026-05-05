@@ -262,6 +262,74 @@ class AdvisorTests(unittest.TestCase):
 
             self.assertIsNone(report.peer_analysis)
 
+    def test_peer_analysis_discovers_local_peers_by_same_theme_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            for symbol, theme in [
+                ("CUSTOM_A", "Precision hardware"),
+                ("CUSTOM_B", "Precision hardware"),
+                ("CUSTOM_C", "Precision hardware"),
+                ("CUSTOM_D", "Offshore services"),
+            ]:
+                repo.upsert_portfolio_classification(
+                    PortfolioClassification(symbol=symbol, sector="Industrials", theme=theme)
+                )
+
+            for symbol, operating_margin, pe_ratio in [
+                ("CUSTOM_B", 0.18, 18),
+                ("CUSTOM_C", 0.16, 22),
+                ("CUSTOM_D", 0.35, 12),
+            ]:
+                repo.upsert_financial_snapshot(
+                    FinancialSnapshot(
+                        symbol=symbol,
+                        period_end="2025-12-31",
+                        period_type="TTM",
+                        revenue=500_000_000,
+                        operating_margin=operating_margin,
+                        free_cash_flow=50_000_000,
+                    )
+                )
+                repo.upsert_market_snapshot(
+                    MarketSnapshot(
+                        symbol=symbol,
+                        as_of="2026-05-05",
+                        close_price=100,
+                        currency="EUR",
+                        pe_ratio=pe_ratio,
+                    )
+                )
+
+            report = Advisor(repo).analyze_snapshots(
+                "CUSTOM_A",
+                FinancialSnapshot(
+                    symbol="CUSTOM_A",
+                    period_end="2025-12-31",
+                    period_type="TTM",
+                    revenue=600_000_000,
+                    operating_margin=0.20,
+                    free_cash_flow=60_000_000,
+                ),
+                MarketSnapshot(
+                    symbol="CUSTOM_A",
+                    as_of="2026-05-05",
+                    close_price=100,
+                    currency="EUR",
+                    pe_ratio=20,
+                ),
+            )
+
+            self.assertIsNotNone(report.peer_analysis)
+            self.assertEqual(
+                [row.symbol for row in report.peer_analysis.rows],
+                ["CUSTOM_A", "CUSTOM_B", "CUSTOM_C"],
+            )
+            self.assertEqual(report.peer_analysis.group_label, "Precision hardware")
+            self.assertEqual(report.peer_analysis.available_peer_count, 2)
+            self.assertEqual(report.peer_analysis.configured_peer_count, 2)
+            self.assertNotIn("CUSTOM_D", [row.symbol for row in report.peer_analysis.rows])
+
     def test_portfolio_fit_matches_existing_position_by_broker_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")

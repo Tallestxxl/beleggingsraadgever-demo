@@ -6,7 +6,7 @@ from statistics import median
 from typing import Dict, Iterable, Optional, Tuple
 
 from .indicators import build_score
-from .models import FinancialSnapshot, MarketSnapshot, PeerAnalysis, PeerComparisonRow
+from .models import FinancialSnapshot, MarketSnapshot, PeerAnalysis, PeerComparisonRow, PortfolioClassification
 from .portfolio import effective_classification
 from .storage import SQLiteRepository
 
@@ -55,13 +55,17 @@ def build_peer_analysis(
 ) -> Optional[PeerAnalysis]:
     normalized_symbol = symbol.strip().upper()
     classification = effective_classification(repository, normalized_symbol)
-    peer_symbols = _peer_symbols(normalized_symbol, classification.theme)
-    configured_peer_count = max(0, len(peer_symbols) - 1)
+    peer_group = _peer_group(classification)
+    if not peer_group:
+        return None
+
     snapshots = extra_snapshots or {}
+    peer_symbols = _peer_symbols(repository, normalized_symbol, peer_group, snapshots)
+    configured_peer_count = len(peer_symbols)
     target_row = _peer_row(normalized_symbol, financial, market, True)
     peer_rows = []
     available_peer_count = 0
-    for peer_symbol in [candidate for candidate in peer_symbols if candidate != normalized_symbol]:
+    for peer_symbol in peer_symbols:
         pair = _snapshot_pair(repository, peer_symbol, snapshots)
         if pair is None:
             continue
@@ -75,18 +79,16 @@ def build_peer_analysis(
         return None
 
     rows = [target_row] + peer_rows
-    group_label = classification.theme if classification.theme != "Onbekend" else classification.sector
-    if group_label == "Onbekend":
-        group_label = "curated peers"
     return PeerAnalysis(
-        group_label=group_label,
+        group_label=peer_group,
         summary=_peer_summary(target_row, peer_rows),
         rows=rows,
         notes=[
             (
-                f"{available_peer_count} van {configured_peer_count} geconfigureerde peers zijn lokaal beschikbaar; "
+                f"{available_peer_count} van {configured_peer_count} peers in dezelfde peer-groep zijn lokaal beschikbaar; "
                 f"de tabel toont maximaal {MAX_PEERS} peers."
             ),
+            "Kandidaten worden generiek gefilterd op dezelfde peer-groep/thema; een brede sector alleen telt niet als peer-match.",
             f"Peeranalyse verschijnt vanaf minimaal {MIN_PEERS} beschikbare peers.",
             "Omzetgroei wordt toegevoegd zodra historische reeksen beschikbaar zijn; deze tabel gebruikt de laatste snapshot.",
         ],
@@ -97,15 +99,58 @@ def build_peer_analysis(
     )
 
 
-def _peer_symbols(symbol: str, theme: str) -> list[str]:
-    peers = [symbol]
+def _peer_symbols(
+    repository: SQLiteRepository,
+    symbol: str,
+    peer_group: str,
+    extra_snapshots: Dict[str, SnapshotPair],
+) -> list[str]:
+    peers = []
+    seen = {symbol}
+
     for candidate in PEERS_BY_SYMBOL.get(symbol, []):
-        if candidate not in peers:
-            peers.append(candidate)
-    for candidate in PEERS_BY_THEME.get(theme, []):
-        if candidate not in peers:
-            peers.append(candidate)
+        normalized_candidate = candidate.strip().upper()
+        if _same_peer_group(repository, normalized_candidate, peer_group):
+            _add_peer_candidate(peers, seen, normalized_candidate)
+
+    for candidate in PEERS_BY_THEME.get(peer_group, []):
+        _add_peer_candidate(peers, seen, candidate.strip().upper())
+
+    for candidate in _local_snapshot_symbols(repository, extra_snapshots):
+        if _same_peer_group(repository, candidate, peer_group):
+            _add_peer_candidate(peers, seen, candidate)
+
     return peers
+
+
+def _add_peer_candidate(peers: list[str], seen: set[str], candidate: str) -> None:
+    if candidate not in seen:
+        seen.add(candidate)
+        peers.append(candidate)
+
+
+def _local_snapshot_symbols(
+    repository: SQLiteRepository,
+    extra_snapshots: Dict[str, SnapshotPair],
+) -> list[str]:
+    symbols = set(repository.symbols_with_snapshots())
+    symbols.update(symbol.strip().upper() for symbol in extra_snapshots)
+    return sorted(symbols)
+
+
+def _same_peer_group(repository: SQLiteRepository, symbol: str, peer_group: str) -> bool:
+    if not peer_group:
+        return False
+    if symbol in PEERS_BY_THEME.get(peer_group, []):
+        return True
+    return _peer_group(effective_classification(repository, symbol)) == peer_group
+
+
+def _peer_group(classification: PortfolioClassification) -> str:
+    theme = classification.theme.strip()
+    if theme and theme != "Onbekend":
+        return theme
+    return ""
 
 
 def _snapshot_pair(

@@ -1081,3 +1081,16 @@ class SQLiteRepository:
             momentum_12m=row["momentum_12m"],
             volatility_1y=row["volatility_1y"],
         )
+
+    def symbols_with_snapshots(self) -> List[str]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT financial.symbol AS symbol
+                FROM financial_snapshots financial
+                INNER JOIN market_snapshots market
+                   ON market.symbol = financial.symbol
+                ORDER BY financial.symbol
+                """
+            ).fetchall()
+        return [row["symbol"] for row in rows]
