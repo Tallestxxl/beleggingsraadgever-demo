@@ -1694,6 +1694,7 @@ def render_report(report: AdviceReport) -> str:
           <h3>Portefeuillefit</h3>
           <p class="summary">{html.escape(fit.summary)}</p>
           <ul class="data-list">
+            <li>Transactieadvies: <strong>{html.escape(fit.transaction_label)}</strong></li>
             <li>Huidige waarde positie: {html.escape(format_eur(fit.position_value))}</li>
             <li>Gewicht positie: {html.escape(format_percent(fit.position_weight))}</li>
             <li>Richtmaximum: {html.escape(format_percent(fit.max_weight))}</li>

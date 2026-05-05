@@ -13,6 +13,15 @@ from .storage import SQLiteRepository
 SECTOR_WARNING_THRESHOLD = 0.20
 THEME_WARNING_THRESHOLD = 0.25
 
+TRANSACTION_LABELS = {
+    "niet_kopen": "Niet kopen",
+    "watchlist": "Watchlist",
+    "kleine_startpositie": "Kleine startpositie",
+    "bijkopen_tot_max": "Bijkopen tot max",
+    "afbouwen": "Afbouwen",
+    "verkopen": "Verkopen",
+}
+
 
 class Advisor:
     def __init__(self, repository: SQLiteRepository) -> None:
@@ -145,6 +154,7 @@ class Advisor:
                 lines.append(f"- Thema {fit.theme}: {fit.theme_weight:.1%} van effecten")
             if fit.sector == "Onbekend" and fit.theme == "Onbekend":
                 lines.append("- Sector/thema: nog niet geclassificeerd.")
+            lines.append(f"- Transactieadvies: {fit.transaction_label}")
             lines.extend(f"- {note}" for note in fit.notes)
 
         if report.score.details:
@@ -237,6 +247,16 @@ class Advisor:
         else:
             summary = f"{symbol} blijft binnen het richtmaximum voor een {risk_profile} profiel."
 
+        transaction_action = _transaction_action(
+            score_total=score.total,
+            has_position=target_value > 0,
+            position_weight=position_weight,
+            max_weight=max_weight,
+            sector_concentrated=classification.sector != "Onbekend" and sector_weight >= SECTOR_WARNING_THRESHOLD,
+            theme_concentrated=classification.theme != "Onbekend" and theme_weight >= THEME_WARNING_THRESHOLD,
+            total_wealth=total_wealth,
+        )
+
         return PortfolioFit(
             summary=summary,
             position_value=target_value,
@@ -244,6 +264,8 @@ class Advisor:
             max_weight=max_weight,
             room_to_max=room_to_max,
             total_wealth=total_wealth,
+            transaction_action=transaction_action,
+            transaction_label=TRANSACTION_LABELS[transaction_action],
             sector=classification.sector,
             sector_value=sector_value,
             sector_weight=sector_weight,
@@ -297,3 +319,30 @@ class Advisor:
         if score.flags:
             parts.append("Belangrijkste aandachtspunt: " + "; ".join(score.flags) + ".")
         return " ".join(parts)
+
+
+def _transaction_action(
+    *,
+    score_total: float,
+    has_position: bool,
+    position_weight: float,
+    max_weight: float,
+    sector_concentrated: bool,
+    theme_concentrated: bool,
+    total_wealth: float,
+) -> str:
+    if total_wealth <= 0:
+        return "watchlist"
+    if score_total < 45:
+        return "verkopen" if has_position else "niet_kopen"
+    if score_total < 60:
+        return "afbouwen" if has_position else "niet_kopen"
+    if score_total < 70:
+        return "watchlist"
+    if has_position and position_weight > max_weight:
+        return "afbouwen"
+    if sector_concentrated or theme_concentrated:
+        return "watchlist"
+    if has_position:
+        return "bijkopen_tot_max"
+    return "kleine_startpositie"

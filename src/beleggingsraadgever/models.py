@@ -124,6 +124,8 @@ class PortfolioFit:
     max_weight: float
     room_to_max: float
     total_wealth: float
+    transaction_action: str = "watchlist"
+    transaction_label: str = "Watchlist"
     sector: str = "Onbekend"
     sector_value: float = 0.0
     sector_weight: float = 0.0

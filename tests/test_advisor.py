@@ -116,6 +116,95 @@ class AdvisorTests(unittest.TestCase):
             self.assertEqual(report.portfolio_fit.sector, "Energy")
             self.assertEqual(report.portfolio_fit.theme, "Oil and gas")
 
+    def test_transaction_advice_suggests_small_start_position_for_strong_new_idea(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.save_investor_profile(
+                InvestorProfile(age=52, annual_income=90000, horizon_years=12, cash_buffer=25000)
+            )
+            repo.upsert_portfolio_asset(
+                PortfolioAsset(asset_type="cash", value=100000, currency="EUR", as_of="2026-05-05")
+            )
+
+            report = Advisor(repo).analyze_snapshots(
+                "NEW",
+                FinancialSnapshot(
+                    symbol="NEW",
+                    period_end="2025-12-31",
+                    period_type="TTM",
+                    revenue=1_000_000_000,
+                    operating_margin=0.25,
+                    net_margin=0.18,
+                    free_cash_flow=150_000_000,
+                    debt=50_000_000,
+                    cash=80_000_000,
+                ),
+                MarketSnapshot(
+                    symbol="NEW",
+                    as_of="2026-05-05",
+                    close_price=50,
+                    currency="EUR",
+                    pe_ratio=15,
+                    ev_ebitda=7,
+                    fcf_yield=0.08,
+                    momentum_12m=0.10,
+                    volatility_1y=0.20,
+                ),
+            )
+
+            self.assertEqual(report.portfolio_fit.transaction_action, "kleine_startpositie")
+            self.assertEqual(report.portfolio_fit.transaction_label, "Kleine startpositie")
+
+    def test_transaction_advice_suggests_selling_weak_existing_position(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.save_investor_profile(
+                InvestorProfile(age=52, annual_income=90000, horizon_years=12, cash_buffer=25000)
+            )
+            repo.upsert_portfolio_asset(
+                PortfolioAsset(asset_type="cash", value=100000, currency="EUR", as_of="2026-05-05")
+            )
+            repo.upsert_portfolio_position(
+                PortfolioPosition(
+                    symbol="WEAK",
+                    quantity=100,
+                    average_cost=20,
+                    currency="EUR",
+                    account="Test",
+                    as_of="2026-05-05",
+                )
+            )
+
+            report = Advisor(repo).analyze_snapshots(
+                "WEAK",
+                FinancialSnapshot(
+                    symbol="WEAK",
+                    period_end="2025-12-31",
+                    period_type="TTM",
+                    revenue=1_000_000_000,
+                    operating_margin=-0.05,
+                    net_margin=-0.10,
+                    free_cash_flow=-50_000_000,
+                    debt=500_000_000,
+                ),
+                MarketSnapshot(
+                    symbol="WEAK",
+                    as_of="2026-05-05",
+                    close_price=15,
+                    currency="EUR",
+                    pe_ratio=40,
+                    ev_ebitda=24,
+                    fcf_yield=-0.02,
+                    momentum_12m=-0.30,
+                    volatility_1y=0.45,
+                ),
+            )
+
+            self.assertEqual(report.portfolio_fit.transaction_action, "verkopen")
+            self.assertEqual(report.portfolio_fit.transaction_label, "Verkopen")
+
 
 if __name__ == "__main__":
     unittest.main()

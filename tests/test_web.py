@@ -165,6 +165,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("Conceptanalyse", html)
             self.assertIn("FUGRO:", html)
             self.assertIn("Scorekaart", html)
+            self.assertIn("Transactieadvies", html)
             self.assertIn("conceptbestand", html)
             self.assertIn("Slotkoers EUR 12.35", html)
             self.assertNotIn("pe_ratio: TODO", html)
