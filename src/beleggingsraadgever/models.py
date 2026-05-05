@@ -209,6 +209,31 @@ class ScoreBreakdown:
 
 
 @dataclass(frozen=True)
+class PeerComparisonRow:
+    symbol: str
+    is_target: bool
+    revenue: Optional[float] = None
+    operating_margin: Optional[float] = None
+    fcf_margin: Optional[float] = None
+    debt_to_fcf: Optional[float] = None
+    pe_ratio: Optional[float] = None
+    ev_ebitda: Optional[float] = None
+    fcf_yield: Optional[float] = None
+    dividend_yield: Optional[float] = None
+    momentum_12m: Optional[float] = None
+    quality_score: float = 0.0
+    valuation_score: float = 0.0
+
+
+@dataclass(frozen=True)
+class PeerAnalysis:
+    group_label: str
+    summary: str
+    rows: List[PeerComparisonRow]
+    notes: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class AdviceReport:
     symbol: str
     verdict: str
@@ -220,3 +245,4 @@ class AdviceReport:
     assumptions: List[str] = field(default_factory=list)
     data_sources: List[DataSource] = field(default_factory=list)
     portfolio_fit: Optional[PortfolioFit] = None
+    peer_analysis: Optional[PeerAnalysis] = None

@@ -118,6 +118,70 @@ class AdvisorTests(unittest.TestCase):
             self.assertEqual(report.portfolio_fit.sector, "Energy")
             self.assertEqual(report.portfolio_fit.theme, "Oil and gas")
 
+    def test_peer_analysis_compares_against_available_peer_snapshots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.upsert_portfolio_classification(
+                PortfolioClassification(symbol="ASMI", sector="Semiconductors", theme="Semiconductor equipment")
+            )
+            for symbol, operating_margin, pe_ratio in [
+                ("ASML", 0.33, 42),
+                ("BESI", 0.28, 36),
+            ]:
+                repo.upsert_financial_snapshot(
+                    FinancialSnapshot(
+                        symbol=symbol,
+                        period_end="2025-12-31",
+                        period_type="TTM",
+                        revenue=1_000_000_000,
+                        operating_margin=operating_margin,
+                        free_cash_flow=200_000_000,
+                        debt=100_000_000,
+                    )
+                )
+                repo.upsert_market_snapshot(
+                    MarketSnapshot(
+                        symbol=symbol,
+                        as_of="2026-05-05",
+                        close_price=100,
+                        currency="EUR",
+                        pe_ratio=pe_ratio,
+                        ev_ebitda=18,
+                        fcf_yield=0.04,
+                        momentum_12m=0.20,
+                    )
+                )
+
+            report = Advisor(repo).analyze_snapshots(
+                "ASMI",
+                FinancialSnapshot(
+                    symbol="ASMI",
+                    period_end="2025-12-31",
+                    period_type="TTM",
+                    revenue=1_000_000_000,
+                    operating_margin=0.35,
+                    free_cash_flow=220_000_000,
+                    debt=90_000_000,
+                ),
+                MarketSnapshot(
+                    symbol="ASMI",
+                    as_of="2026-05-05",
+                    close_price=500,
+                    currency="EUR",
+                    pe_ratio=30,
+                    ev_ebitda=16,
+                    fcf_yield=0.05,
+                    momentum_12m=0.30,
+                ),
+            )
+
+            self.assertIsNotNone(report.peer_analysis)
+            self.assertEqual([row.symbol for row in report.peer_analysis.rows], ["ASMI", "ASML", "BESI"])
+            self.assertIn("Relatief beeld", report.peer_analysis.summary)
+            markdown = Advisor(repo).render_markdown(report)
+            self.assertIn("Peeranalyse", markdown)
+
     def test_portfolio_fit_matches_existing_position_by_broker_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")

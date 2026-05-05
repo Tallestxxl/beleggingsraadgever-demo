@@ -540,7 +540,7 @@ def _make_handler(repository: SQLiteRepository):
                 report = build_draft_report(repository, workflow)
             elif parsed.path == "/analyze" or parsed.query:
                 try:
-                    report = Advisor(repository).analyze(symbol)
+                    report = Advisor(repository).analyze(symbol, peer_snapshots=local_peer_snapshots())
                 except LookupError:
                     workflow = ensure_snapshot_workflow(symbol, auto_collect=True)
                     report = build_draft_report(repository, workflow)
@@ -1160,6 +1160,25 @@ def format_percent(value: float) -> str:
     return f"{value:.1%}"
 
 
+def format_optional_percent(value: Optional[float]) -> str:
+    return "n.b." if value is None else f"{value:.1%}"
+
+
+def format_optional_number(value: Optional[float], suffix: str = "") -> str:
+    return "n.b." if value is None else f"{value:.1f}{suffix}"
+
+
+def format_compact_amount(value: Optional[float]) -> str:
+    if value is None:
+        return "n.b."
+    abs_value = abs(value)
+    if abs_value >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.1f} mld"
+    if abs_value >= 1_000_000:
+        return f"{value / 1_000_000:.1f} mln"
+    return f"{value:,.0f}".replace(",", ".")
+
+
 def format_input_number(value: Optional[float]) -> str:
     if value is None:
         return ""
@@ -1353,12 +1372,30 @@ def build_draft_report(repository: SQLiteRepository, workflow: SnapshotWorkflow)
         market,
         data_sources=_data_sources_from_snapshot(workflow.symbol, snapshot),
         evidence=_evidence_from_snapshot(snapshot),
+        peer_snapshots=local_peer_snapshots(),
         extra_assumptions=[
             "Dit is een conceptanalyse uit het lokale conceptbestand; nog niet alle handmatige controlepunten zijn afgerond.",
             "Concurrentiepositie, cycliciteit, managementsignalen en jouw beleggingsprincipe kunnen het oordeel nog wijzigen.",
         ],
         knowledge_label="conceptbestand",
     )
+
+
+def local_peer_snapshots() -> dict[str, tuple[FinancialSnapshot, MarketSnapshot]]:
+    snapshots: dict[str, tuple[FinancialSnapshot, MarketSnapshot]] = {}
+    for directory in (DRAFTS_DIR, Path("data/imports"), PROCESSED_DIR):
+        if not directory.exists():
+            continue
+        for path in directory.glob("*.json"):
+            try:
+                data = load_company_snapshot(path)
+                symbol = str(data.get("symbol", "")).strip().upper()
+                if not symbol:
+                    continue
+                snapshots[symbol] = (_financial_from_snapshot(symbol, data), _market_from_snapshot(symbol, data))
+            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError, SnapshotValidationError):
+                continue
+    return snapshots
 
 
 def _store_snapshot_classification(repository: SQLiteRepository, symbol: str, snapshot: dict) -> None:
@@ -1696,6 +1733,7 @@ def render_report(report: AdviceReport) -> str:
     evidence = "".join(render_evidence_item(hit) for hit in report.evidence)
     if not evidence:
         evidence = '<p class="evidence-meta">Geen relevante fragmenten gevonden in de lokale kennisbank.</p>'
+    peer_analysis = render_peer_analysis(report)
 
     freshness = "".join(
         f"<li>{html.escape(name)}: {html.escape(value)}</li>"
@@ -1782,6 +1820,7 @@ def render_report(report: AdviceReport) -> str:
             {render_score_block("Totaalscore", report.score.total, report.score.details.get("total", []))}
           </div>
         </section>
+        {peer_analysis}
         {flags}
         <section>
           <h3>Relevante kennisbank-fragmenten</h3>
@@ -1806,6 +1845,42 @@ def render_report(report: AdviceReport) -> str:
         </section>
       </div>
     </div>"""
+
+
+def render_peer_analysis(report: AdviceReport) -> str:
+    analysis = report.peer_analysis
+    if analysis is None:
+        return ""
+    rows = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(row.symbol)}{' *' if row.is_target else ''}</td>
+          <td>{html.escape(format_compact_amount(row.revenue))}</td>
+          <td>{html.escape(format_optional_percent(row.operating_margin))}</td>
+          <td>{html.escape(format_optional_percent(row.fcf_margin))}</td>
+          <td>{html.escape(format_optional_number(row.debt_to_fcf, suffix='x'))}</td>
+          <td>{html.escape(format_optional_number(row.pe_ratio))}</td>
+          <td>{html.escape(format_optional_number(row.ev_ebitda))}</td>
+          <td>{html.escape(format_optional_percent(row.fcf_yield))}</td>
+          <td>{html.escape(format_optional_percent(row.dividend_yield))}</td>
+          <td>{html.escape(format_optional_percent(row.momentum_12m))}</td>
+        </tr>"""
+        for row in analysis.rows
+    )
+    notes = "".join(f"<li>{html.escape(note)}</li>" for note in analysis.notes)
+    return f"""
+        <section>
+          <h3>Peeranalyse</h3>
+          <p class="summary">{html.escape(analysis.summary)}</p>
+          <p class="evidence-meta">Peer-set: {html.escape(analysis.group_label)}. * = geanalyseerd aandeel.</p>
+          <table class="data-table">
+            <thead>
+              <tr><th>Aandeel</th><th>Omzet</th><th>Op. marge</th><th>FCF-marge</th><th>Schuld/FCF</th><th>K/W</th><th>EV/EBITDA</th><th>FCF-yield</th><th>Dividend</th><th>Momentum</th></tr>
+            </thead>
+            <tbody>{rows}</tbody>
+          </table>
+          <ul class="assumption-list">{notes}</ul>
+        </section>"""
 
 
 def render_score_block(label: str, value: float, details: list[str]) -> str:

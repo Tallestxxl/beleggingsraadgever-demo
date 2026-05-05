@@ -7,6 +7,7 @@ from typing import List, Optional
 from .identity import aliases_for_data_sources, candidate_portfolio_symbols
 from .indicators import build_score, conviction_from_score, verdict_from_score
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeHit, MarketSnapshot, PortfolioFit
+from .peers import SnapshotPair, build_peer_analysis
 from .portfolio import effective_classification, exposure_buckets, portfolio_position_exposures
 from .storage import SQLiteRepository
 
@@ -28,11 +29,11 @@ class Advisor:
     def __init__(self, repository: SQLiteRepository) -> None:
         self.repository = repository
 
-    def analyze(self, symbol: str) -> AdviceReport:
+    def analyze(self, symbol: str, *, peer_snapshots: Optional[dict[str, SnapshotPair]] = None) -> AdviceReport:
         normalized_symbol = symbol.upper()
         financial = self.repository.latest_financial_snapshot(normalized_symbol)
         market = self.repository.latest_market_snapshot(normalized_symbol)
-        return self.analyze_snapshots(normalized_symbol, financial, market)
+        return self.analyze_snapshots(normalized_symbol, financial, market, peer_snapshots=peer_snapshots)
 
     def analyze_snapshots(
         self,
@@ -44,6 +45,7 @@ class Advisor:
         evidence: Optional[List[KnowledgeHit]] = None,
         extra_assumptions: Optional[List[str]] = None,
         knowledge_label: str = "lokale index",
+        peer_snapshots: Optional[dict[str, SnapshotPair]] = None,
     ) -> AdviceReport:
         normalized_symbol = symbol.upper()
         score = build_score(financial, market)
@@ -54,6 +56,13 @@ class Advisor:
             data_sources if data_sources is not None else self.repository.data_sources_for_symbol(normalized_symbol)
         )
         portfolio_fit = self._build_portfolio_fit(normalized_symbol, market, score, data_sources=data_sources)
+        peer_analysis = build_peer_analysis(
+            self.repository,
+            normalized_symbol,
+            financial,
+            market,
+            extra_snapshots=peer_snapshots,
+        )
 
         summary = self._build_summary(normalized_symbol, financial, market, verdict, score)
         data_freshness = {
@@ -81,6 +90,7 @@ class Advisor:
             assumptions=assumptions,
             data_sources=data_sources,
             portfolio_fit=portfolio_fit,
+            peer_analysis=peer_analysis,
         )
 
     def render_markdown(self, report: AdviceReport) -> str:
@@ -107,6 +117,20 @@ class Advisor:
         if report.score.flags:
             lines.extend(["## Risicosignalen", ""])
             lines.extend(f"- {flag}" for flag in report.score.flags)
+            lines.append("")
+
+        if report.peer_analysis:
+            lines.extend(["## Peeranalyse", "", report.peer_analysis.summary, ""])
+            for row in report.peer_analysis.rows:
+                target = " (doel)" if row.is_target else ""
+                lines.append(
+                    f"- {row.symbol}{target}: kwaliteit {row.quality_score:.1f}, "
+                    f"waardering {row.valuation_score:.1f}, "
+                    f"op. marge {_format_percent_plain(row.operating_margin)}, "
+                    f"K/W {_format_number_plain(row.pe_ratio)}, "
+                    f"FCF-yield {_format_percent_plain(row.fcf_yield)}"
+                )
+            lines.extend(f"- {note}" for note in report.peer_analysis.notes)
             lines.append("")
 
         lines.extend(["## Relevante kennisbank-fragmenten", ""])
@@ -611,3 +635,11 @@ def _format_eur_plain(value: Optional[float]) -> str:
     if value is None:
         return "EUR 0"
     return f"EUR {value:,.0f}".replace(",", ".")
+
+
+def _format_percent_plain(value: Optional[float]) -> str:
+    return "n.b." if value is None else f"{value:.1%}"
+
+
+def _format_number_plain(value: Optional[float]) -> str:
+    return "n.b." if value is None else f"{value:.1f}"
