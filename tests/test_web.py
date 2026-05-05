@@ -17,6 +17,7 @@ from beleggingsraadgever.web import (
     build_page,
     build_portfolio_page,
     ensure_snapshot_workflow,
+    import_portfolio_csv_workflow,
     save_portfolio_position,
     save_portfolio_profile,
     save_case_note_workflow,
@@ -284,9 +285,30 @@ class WebTests(unittest.TestCase):
             html = build_portfolio_page(repo)
 
             self.assertIn("Profiel & portefeuille", html)
+            self.assertIn("CSV-import", html)
             self.assertIn("Effectenportefeuille", html)
             self.assertIn("DEMO", html)
             self.assertIn("EUR 550.000", html)
+
+    def test_portfolio_csv_workflow_imports_file_path(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = Path(tmp) / "portfolio.csv"
+            csv_path.write_text(
+                """A VAN EGMOND | Depotnummer 41.70.77.300 | 05 may.26 | 11:25
+Soort,Beleggen,Naam,Status,Aantal,Kostpr. per eenheid,Valuta kostpr. per eenheid,Opgebouwd vanaf,Koers,Valuta koers,Koers per,Marktwaarde, Valuta marktwaarde,Dividend / Coupons,Valuta Dividend / Coupons,Resultaat %,Resultaat EUR,
+,"417077300","SHELL","Ongerealiseerd","ST  1.077"," 31,56","EUR","28-01-2022"," 38,32","EUR","28-01-2022"," 41.265","EUR"," 345","EUR"," 21,4 %"," 7.273",
+""",
+                encoding="utf-8",
+            )
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+
+            message = import_portfolio_csv_workflow(repo, {"csv_path": [str(csv_path)]})
+
+            self.assertIn("1 posities", message)
+            self.assertEqual(repo.latest_portfolio_positions()[0].symbol, "SHELL")
 
 
 def _fake_web_stockanalysis_lookup_fetch(url: str) -> str:

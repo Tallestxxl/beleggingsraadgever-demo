@@ -57,6 +57,15 @@ class PortfolioPosition:
 
 
 @dataclass(frozen=True)
+class PortfolioPrice:
+    symbol: str
+    as_of: str
+    close_price: float
+    currency: str = "EUR"
+    source: str = "portfolio_csv"
+
+
+@dataclass(frozen=True)
 class InvestorProfile:
     age: Optional[int] = None
     annual_income: Optional[float] = None

@@ -17,6 +17,7 @@ from .models import (
     MacroObservation,
     MarketSnapshot,
     PortfolioAsset,
+    PortfolioPrice,
     PortfolioPosition,
     Principle,
 )
@@ -142,6 +143,16 @@ CREATE TABLE IF NOT EXISTS portfolio_assets (
   as_of TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_prices (
+  symbol TEXT NOT NULL,
+  as_of TEXT NOT NULL,
+  close_price REAL NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'EUR',
+  source TEXT NOT NULL DEFAULT 'portfolio_csv',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(symbol, as_of, source)
 );
 
 CREATE TABLE IF NOT EXISTS advice_runs (
@@ -544,6 +555,41 @@ class SQLiteRepository:
                     position.as_of,
                 ),
             )
+
+    def upsert_portfolio_price(self, price: PortfolioPrice) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO portfolio_prices (symbol, as_of, close_price, currency, source)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, as_of, source) DO UPDATE SET
+                  close_price=excluded.close_price,
+                  currency=excluded.currency
+                """,
+                (price.symbol.upper(), price.as_of, price.close_price, price.currency, price.source),
+            )
+
+    def latest_portfolio_price(self, symbol: str) -> Optional[PortfolioPrice]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT symbol, as_of, close_price, currency, source
+                FROM portfolio_prices
+                WHERE symbol = ?
+                ORDER BY as_of DESC
+                LIMIT 1
+                """,
+                (symbol.upper(),),
+            ).fetchone()
+        if row is None:
+            return None
+        return PortfolioPrice(
+            symbol=row["symbol"],
+            as_of=row["as_of"],
+            close_price=row["close_price"],
+            currency=row["currency"],
+            source=row["source"],
+        )
 
     def latest_portfolio_positions(self) -> List[PortfolioPosition]:
         with self.connect() as conn:

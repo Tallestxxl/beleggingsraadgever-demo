@@ -168,10 +168,14 @@ class Advisor:
         position_values: dict[str, float] = {}
         for position in positions:
             value = position.quantity * position.average_cost
-            try:
-                value = position.quantity * self.repository.latest_market_snapshot(position.symbol).close_price
-            except LookupError:
-                pass
+            portfolio_price = self.repository.latest_portfolio_price(position.symbol)
+            if portfolio_price is not None:
+                value = position.quantity * portfolio_price.close_price
+            else:
+                try:
+                    value = position.quantity * self.repository.latest_market_snapshot(position.symbol).close_price
+                except LookupError:
+                    pass
             position_values[position.symbol.upper()] = position_values.get(position.symbol.upper(), 0.0) + value
 
         target_value = position_values.get(symbol.upper(), 0.0)

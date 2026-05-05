@@ -25,6 +25,7 @@ from .importer import (
 )
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
 from .models import InvestorProfile, PortfolioAsset, PortfolioPosition
+from .portfolio_importer import import_portfolio_csv
 from .real_data import DRAFTS_DIR, PROCESSED_DIR, seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
@@ -549,6 +550,7 @@ def _make_handler(repository: SQLiteRepository):
                 "/workflow/import",
                 "/workflow/collect",
                 "/workflow/note",
+                "/portfolio/import-csv",
                 "/portfolio/profile",
                 "/portfolio/position",
             }:
@@ -566,6 +568,15 @@ def _make_handler(repository: SQLiteRepository):
                     self._send_html(build_portfolio_page(repository, error=str(error)))
                     return
                 self._redirect("/portfolio?message=Profiel%20opgeslagen")
+                return
+
+            if parsed.path == "/portfolio/import-csv":
+                try:
+                    message = import_portfolio_csv_workflow(repository, params)
+                except (OSError, ValueError) as error:
+                    self._send_html(build_portfolio_page(repository, error=str(error)))
+                    return
+                self._redirect(f"/portfolio?message={quote_plus(message)}")
                 return
 
             if parsed.path == "/portfolio/position":
@@ -787,6 +798,10 @@ def render_portfolio_dashboard(
       </div>
       <div>
         <section>
+          <h3>CSV-import</h3>
+          {render_csv_import_form()}
+        </section>
+        <section>
           <h3>Nieuwe of bijgewerkte positie</h3>
           {render_position_form()}
         </section>
@@ -796,6 +811,17 @@ def render_portfolio_dashboard(
         </section>
       </div>
     </div>"""
+
+
+def render_csv_import_form() -> str:
+    return """
+          <form class="portfolio-form" method="post" action="/portfolio/import-csv">
+            <div>
+              <label for="csv-path">CSV-pad</label>
+              <input id="csv-path" name="csv_path" type="text" value="/Users/albertvanegmond/Downloads/Beleggen_report (2).csv">
+            </div>
+            <button type="submit">Importeer CSV</button>
+          </form>"""
 
 
 def render_profile_form(profile: Optional[InvestorProfile], assets: list[PortfolioAsset]) -> str:
@@ -977,14 +1003,26 @@ def save_portfolio_position(repository: SQLiteRepository, params: dict) -> None:
     )
 
 
+def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) -> str:
+    csv_path = _first_param(params, "csv_path")
+    if not csv_path:
+        raise ValueError("CSV-pad is verplicht.")
+    result = import_portfolio_csv(repository, Path(csv_path))
+    return result.summary
+
+
 def portfolio_position_rows(repository: SQLiteRepository) -> list[dict]:
     rows = []
     for position in repository.latest_portfolio_positions():
         market_price = position.average_cost
-        try:
-            market_price = repository.latest_market_snapshot(position.symbol).close_price
-        except LookupError:
-            pass
+        portfolio_price = repository.latest_portfolio_price(position.symbol)
+        if portfolio_price is not None:
+            market_price = portfolio_price.close_price
+        else:
+            try:
+                market_price = repository.latest_market_snapshot(position.symbol).close_price
+            except LookupError:
+                pass
         market_value = position.quantity * market_price
         cost_value = position.quantity * position.average_cost
         return_pct = ((market_value - cost_value) / cost_value) if cost_value else None
