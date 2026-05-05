@@ -231,6 +231,10 @@ class PeerAnalysis:
     summary: str
     rows: List[PeerComparisonRow]
     notes: List[str] = field(default_factory=list)
+    available_peer_count: int = 0
+    configured_peer_count: int = 0
+    max_peer_count: int = 0
+    min_peer_count: int = 0
 
 
 @dataclass(frozen=True)

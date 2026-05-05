@@ -178,9 +178,42 @@ class AdvisorTests(unittest.TestCase):
 
             self.assertIsNotNone(report.peer_analysis)
             self.assertEqual([row.symbol for row in report.peer_analysis.rows], ["ASMI", "ASML", "BESI"])
+            self.assertEqual(report.peer_analysis.available_peer_count, 2)
+            self.assertEqual(report.peer_analysis.configured_peer_count, 5)
+            self.assertEqual(report.peer_analysis.max_peer_count, 6)
+            self.assertEqual(report.peer_analysis.min_peer_count, 2)
             self.assertIn("Relatief beeld", report.peer_analysis.summary)
             markdown = Advisor(repo).render_markdown(report)
             self.assertIn("Peeranalyse", markdown)
+            self.assertIn("2 van 5 peers beschikbaar", markdown)
+
+    def test_peer_analysis_is_hidden_until_minimum_peer_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.upsert_portfolio_classification(
+                PortfolioClassification(symbol="ASMI", sector="Semiconductors", theme="Semiconductor equipment")
+            )
+            repo.upsert_financial_snapshot(
+                FinancialSnapshot(
+                    symbol="ASML",
+                    period_end="2025-12-31",
+                    period_type="TTM",
+                    revenue=1_000_000_000,
+                    operating_margin=0.33,
+                )
+            )
+            repo.upsert_market_snapshot(
+                MarketSnapshot(symbol="ASML", as_of="2026-05-05", close_price=100, currency="EUR")
+            )
+
+            report = Advisor(repo).analyze_snapshots(
+                "ASMI",
+                FinancialSnapshot(symbol="ASMI", period_end="2025-12-31", period_type="TTM", revenue=1_000_000_000),
+                MarketSnapshot(symbol="ASMI", as_of="2026-05-05", close_price=500, currency="EUR"),
+            )
+
+            self.assertIsNone(report.peer_analysis)
 
     def test_portfolio_fit_matches_existing_position_by_broker_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

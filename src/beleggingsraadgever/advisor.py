@@ -121,6 +121,11 @@ class Advisor:
 
         if report.peer_analysis:
             lines.extend(["## Peeranalyse", "", report.peer_analysis.summary, ""])
+            lines.append(
+                f"- Peerbeschikbaarheid: {report.peer_analysis.available_peer_count} van "
+                f"{report.peer_analysis.configured_peer_count} peers beschikbaar; maximaal "
+                f"{report.peer_analysis.max_peer_count} peers getoond."
+            )
             for row in report.peer_analysis.rows:
                 target = " (doel)" if row.is_target else ""
                 lines.append(

@@ -1872,7 +1872,7 @@ def render_peer_analysis(report: AdviceReport) -> str:
         <section>
           <h3>Peeranalyse</h3>
           <p class="summary">{html.escape(analysis.summary)}</p>
-          <p class="evidence-meta">Peer-set: {html.escape(analysis.group_label)}. * = geanalyseerd aandeel.</p>
+          <p class="evidence-meta">Peer-set: {html.escape(analysis.group_label)}. {analysis.available_peer_count} van {analysis.configured_peer_count} peers beschikbaar; maximaal {analysis.max_peer_count} peers getoond. * = geanalyseerd aandeel.</p>
           <table class="data-table">
             <thead>
               <tr><th>Aandeel</th><th>Omzet</th><th>Op. marge</th><th>FCF-marge</th><th>Schuld/FCF</th><th>K/W</th><th>EV/EBITDA</th><th>FCF-yield</th><th>Dividend</th><th>Momentum</th></tr>

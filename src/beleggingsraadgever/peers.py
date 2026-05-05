@@ -12,6 +12,9 @@ from .storage import SQLiteRepository
 
 SnapshotPair = Tuple[FinancialSnapshot, MarketSnapshot]
 
+MIN_PEERS = 2
+MAX_PEERS = 6
+
 
 PEERS_BY_SYMBOL = {
     "ASMI": ["ASML", "BESI", "LAM RESEARCH", "TSMI", "NVIDIA"],
@@ -53,36 +56,44 @@ def build_peer_analysis(
     normalized_symbol = symbol.strip().upper()
     classification = effective_classification(repository, normalized_symbol)
     peer_symbols = _peer_symbols(normalized_symbol, classification.theme)
+    configured_peer_count = max(0, len(peer_symbols) - 1)
     snapshots = extra_snapshots or {}
-    rows = []
-    for peer_symbol in peer_symbols:
-        pair = (financial, market) if peer_symbol == normalized_symbol else _snapshot_pair(repository, peer_symbol, snapshots)
+    target_row = _peer_row(normalized_symbol, financial, market, True)
+    peer_rows = []
+    available_peer_count = 0
+    for peer_symbol in [candidate for candidate in peer_symbols if candidate != normalized_symbol]:
+        pair = _snapshot_pair(repository, peer_symbol, snapshots)
         if pair is None:
             continue
+        available_peer_count += 1
+        if len(peer_rows) >= MAX_PEERS:
+            continue
         peer_financial, peer_market = pair
-        row = _peer_row(peer_symbol, peer_financial, peer_market, peer_symbol == normalized_symbol)
-        rows.append(row)
+        peer_rows.append(_peer_row(peer_symbol, peer_financial, peer_market, False))
 
-    if len(rows) < 2:
+    if len(peer_rows) < MIN_PEERS:
         return None
 
-    target = next((row for row in rows if row.is_target), None)
-    if target is None:
-        target = _peer_row(normalized_symbol, financial, market, True)
-        rows = [target] + rows
-
-    peer_rows = [row for row in rows if not row.is_target]
+    rows = [target_row] + peer_rows
     group_label = classification.theme if classification.theme != "Onbekend" else classification.sector
     if group_label == "Onbekend":
         group_label = "curated peers"
     return PeerAnalysis(
         group_label=group_label,
-        summary=_peer_summary(target, peer_rows),
+        summary=_peer_summary(target_row, peer_rows),
         rows=rows,
         notes=[
-            "V1 vergelijkt alleen peers waarvoor lokaal een recente snapshot beschikbaar is.",
+            (
+                f"{available_peer_count} van {configured_peer_count} geconfigureerde peers zijn lokaal beschikbaar; "
+                f"de tabel toont maximaal {MAX_PEERS} peers."
+            ),
+            f"Peeranalyse verschijnt vanaf minimaal {MIN_PEERS} beschikbare peers.",
             "Omzetgroei wordt toegevoegd zodra historische reeksen beschikbaar zijn; deze tabel gebruikt de laatste snapshot.",
         ],
+        available_peer_count=available_peer_count,
+        configured_peer_count=configured_peer_count,
+        max_peer_count=MAX_PEERS,
+        min_peer_count=MIN_PEERS,
     )
 
 
