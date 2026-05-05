@@ -46,6 +46,14 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(market.close_price, 20.0)
         self.assertEqual(market.revenue, 1_000_000_000)
 
+    def test_collect_market_data_uses_lookup_for_company_name_with_spaces(self) -> None:
+        market = collect_market_data("LAM RESEARCH", fetch_text=_fake_lam_research_lookup_fetch)
+
+        self.assertEqual(market.provider, "StockAnalysis")
+        self.assertEqual(market.provider_symbol, "LRCX")
+        self.assertEqual(market.close_price, 20.0)
+        self.assertEqual(market.revenue, 1_000_000_000)
+
     def test_collect_snapshot_data_prefills_market_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "fugro.json"
@@ -93,6 +101,30 @@ def _fake_stockanalysis_lookup_fetch(url: str) -> str:
     if "statistics" in url and "quote/ams/APAM" in url:
         return _fake_stockanalysis_statistics_html()
     if "stockanalysis.com/quote/ams/APAM/" in url:
+        return _fake_stockanalysis_overview_html()
+    return "Page Not Found - 404"
+
+
+def _fake_lam_research_lookup_fetch(url: str) -> str:
+    if "stocks/lam research" in url or "quote/ams/LAM RESEARCH" in url:
+        raise AssertionError(f"Company name was used as direct quote URL: {url}")
+    if "symbol-lookup" in url:
+        return """
+        <script>
+          data:[{type:"data",data:{query:"LAM RESEARCH",count:1,
+          results:[
+            {s:"@bkk/LRCX23",n:"Lam Research Corporation DR",t:"Stock",p:3.08,m:1000000000},
+            {s:"LRCX",n:"Lam Research Corporation",t:"Stock",p:102.34,m:120000000000}
+          ]}}]
+        </script>
+        """
+    if "quote/bkk/LRCX23" in url:
+        raise AssertionError(f"Foreign derivative should not be preferred over US listing: {url}")
+    if "financials" in url and "stocks/lrcx" in url:
+        return _fake_stockanalysis_financials_html()
+    if "statistics" in url and "stocks/lrcx" in url:
+        return _fake_stockanalysis_statistics_html()
+    if "stockanalysis.com/stocks/lrcx/" in url:
         return _fake_stockanalysis_overview_html()
     return "Page Not Found - 404"
 

@@ -310,13 +310,15 @@ def _stockanalysis_candidates(symbol: str) -> Iterable[StockAnalysisCandidate]:
             candidates.append((f"AMS:{ticker}", f"quote/ams/{ticker}/"))
     elif normalized_symbol.endswith(".AS"):
         ticker = normalized_symbol[:-3]
-        candidates.append((f"AMS:{ticker}", f"quote/ams/{ticker}/"))
+        if _is_ticker_like(ticker):
+            candidates.append((f"AMS:{ticker}", f"quote/ams/{ticker}/"))
     else:
         alias = AMSTERDAM_ALIASES.get(normalized_symbol)
         if alias:
             candidates.append((f"AMS:{alias}", f"quote/ams/{alias}/"))
-        candidates.append((normalized_symbol, f"stocks/{normalized_symbol.lower()}/"))
-        candidates.append((f"AMS:{normalized_symbol}", f"quote/ams/{normalized_symbol}/"))
+        if _is_ticker_like(normalized_symbol):
+            candidates.append((normalized_symbol, f"stocks/{normalized_symbol.lower()}/"))
+            candidates.append((f"AMS:{normalized_symbol}", f"quote/ams/{normalized_symbol}/"))
 
     seen = set()
     for provider_symbol, path in candidates:
@@ -337,13 +339,31 @@ def _stockanalysis_lookup_url(symbol: str) -> str:
 
 
 def _stockanalysis_lookup_candidates(raw_html: str) -> Iterable[StockAnalysisCandidate]:
-    seen = set()
+    candidates: List[StockAnalysisCandidate] = []
     for lookup_symbol in _parse_stockanalysis_lookup_symbols(raw_html):
         candidate = _stockanalysis_candidate_from_lookup_symbol(lookup_symbol)
-        if candidate is None or candidate.source_url in seen:
+        if candidate is None:
+            continue
+        candidates.append(candidate)
+
+    seen = set()
+    for candidate in sorted(candidates, key=_stockanalysis_lookup_priority):
+        if candidate.source_url in seen:
             continue
         seen.add(candidate.source_url)
         yield candidate
+
+
+def _stockanalysis_lookup_priority(candidate: StockAnalysisCandidate) -> tuple[int, str]:
+    provider_symbol = candidate.provider_symbol.upper()
+    if ":" not in provider_symbol:
+        return (0, provider_symbol)
+    exchange = provider_symbol.split(":", 1)[0]
+    if exchange in {"NASDAQ", "NYSE", "AMEX"}:
+        return (1, provider_symbol)
+    if exchange == "AMS":
+        return (2, provider_symbol)
+    return (3, provider_symbol)
 
 
 def _parse_stockanalysis_lookup_symbols(raw_html: str) -> List[str]:
@@ -368,18 +388,24 @@ def _stockanalysis_candidate_from_lookup_symbol(lookup_symbol: str) -> Optional[
         exchange, ticker = symbol[1:].split("/", 1)
         exchange = exchange.strip().lower()
         ticker = ticker.strip().upper()
-        if not exchange or not ticker:
+        if not exchange or not _is_ticker_like(ticker):
             return None
         return _stockanalysis_candidate_from_path(f"{exchange.upper()}:{ticker}", f"quote/{exchange}/{ticker}/")
     if ":" in symbol:
         exchange, ticker = symbol.split(":", 1)
         exchange = exchange.strip().lower()
         ticker = ticker.strip().upper()
-        if not exchange or not ticker:
+        if not exchange or not _is_ticker_like(ticker):
             return None
         return _stockanalysis_candidate_from_path(f"{exchange.upper()}:{ticker}", f"quote/{exchange}/{ticker}/")
     ticker = symbol.upper()
+    if not _is_ticker_like(ticker):
+        return None
     return _stockanalysis_candidate_from_path(ticker, f"stocks/{ticker.lower()}/")
+
+
+def _is_ticker_like(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z0-9.\-]+", value.strip().upper()))
 
 
 def _stockanalysis_candidate_from_path(provider_symbol: str, path: str) -> StockAnalysisCandidate:
@@ -398,7 +424,8 @@ def _stooq_candidates(symbol: str) -> Iterable[str]:
     alias = AMSTERDAM_ALIASES.get(normalized_symbol)
     if alias:
         bases.append(alias)
-    bases.append(normalized_symbol)
+    if _is_ticker_like(normalized_symbol):
+        bases.append(normalized_symbol)
 
     seen = set()
     for base in bases:
