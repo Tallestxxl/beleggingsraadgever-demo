@@ -126,12 +126,21 @@ class PortfolioFit:
     total_wealth: float
     transaction_action: str = "watchlist"
     transaction_label: str = "Watchlist"
+    position_room: float = 0.0
+    cash_value: Optional[float] = None
+    cash_buffer: Optional[float] = None
+    available_cash: Optional[float] = None
+    max_new_buy_amount: float = 0.0
+    practical_buy_amount: float = 0.0
+    buy_room_factor: float = 0.0
     sector: str = "Onbekend"
     sector_value: float = 0.0
     sector_weight: float = 0.0
     theme: str = "Onbekend"
     theme_value: float = 0.0
     theme_weight: float = 0.0
+    buy_room_limits: List[str] = field(default_factory=list)
+    buy_room_calculation: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
 
 

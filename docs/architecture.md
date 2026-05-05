@@ -70,6 +70,11 @@ De analyse-engine combineert:
 De LLM-laag komt later bovenop deze engine voor betere synthese. De kernlogica
 blijft regelgebaseerd en testbaar.
 
+## Open bouwstappen
+
+- Advieslaag die verkoopbare bestaande posities aanwijst wanneer er onvoldoende
+  beschikbare cash is om een nieuwe koop te financieren.
+
 ## Privacy
 
 De volgende data wordt niet gecommit:

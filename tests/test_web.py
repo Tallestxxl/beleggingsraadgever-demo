@@ -166,6 +166,8 @@ class WebTests(unittest.TestCase):
             self.assertIn("FUGRO:", html)
             self.assertIn("Scorekaart", html)
             self.assertIn("Transactieadvies", html)
+            self.assertIn("Maximale nieuwe koopruimte", html)
+            self.assertIn("Toon koopruimte-berekening", html)
             self.assertIn("conceptbestand", html)
             self.assertIn("Slotkoers EUR 12.35", html)
             self.assertNotIn("pe_ratio: TODO", html)

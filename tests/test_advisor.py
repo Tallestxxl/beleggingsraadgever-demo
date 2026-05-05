@@ -155,6 +155,54 @@ class AdvisorTests(unittest.TestCase):
 
             self.assertEqual(report.portfolio_fit.transaction_action, "kleine_startpositie")
             self.assertEqual(report.portfolio_fit.transaction_label, "Kleine startpositie")
+            self.assertEqual(report.portfolio_fit.max_new_buy_amount, 5000)
+            self.assertEqual(report.portfolio_fit.practical_buy_amount, 5000)
+            self.assertTrue(any("Beschikbare beleggingscash" in line for line in report.portfolio_fit.buy_room_calculation))
+
+    def test_buy_room_is_capped_by_cash_above_buffer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.save_investor_profile(
+                InvestorProfile(age=52, annual_income=90000, horizon_years=12, cash_buffer=20000)
+            )
+            repo.upsert_portfolio_asset(
+                PortfolioAsset(asset_type="cash", value=40000, currency="EUR", as_of="2026-05-05")
+            )
+            repo.upsert_portfolio_asset(
+                PortfolioAsset(asset_type="house", value=1_000_000, currency="EUR", as_of="2026-05-05")
+            )
+
+            report = Advisor(repo).analyze_snapshots(
+                "CASHCAP",
+                FinancialSnapshot(
+                    symbol="CASHCAP",
+                    period_end="2025-12-31",
+                    period_type="TTM",
+                    revenue=1_000_000_000,
+                    operating_margin=0.25,
+                    net_margin=0.18,
+                    free_cash_flow=150_000_000,
+                    debt=50_000_000,
+                    cash=80_000_000,
+                ),
+                MarketSnapshot(
+                    symbol="CASHCAP",
+                    as_of="2026-05-05",
+                    close_price=50,
+                    currency="EUR",
+                    pe_ratio=15,
+                    ev_ebitda=7,
+                    fcf_yield=0.08,
+                    momentum_12m=0.10,
+                    volatility_1y=0.20,
+                ),
+            )
+
+            self.assertEqual(report.portfolio_fit.position_room, 52000)
+            self.assertEqual(report.portfolio_fit.available_cash, 20000)
+            self.assertEqual(report.portfolio_fit.max_new_buy_amount, 20000)
+            self.assertEqual(report.portfolio_fit.practical_buy_amount, 20000)
 
     def test_transaction_advice_suggests_selling_weak_existing_position(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

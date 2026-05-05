@@ -1676,6 +1676,8 @@ def render_report(report: AdviceReport) -> str:
     if report.portfolio_fit:
         fit = report.portfolio_fit
         notes = "".join(f"<li>{html.escape(note)}</li>" for note in fit.notes)
+        buy_room_limits = "".join(f"<li>{html.escape(item)}</li>" for item in fit.buy_room_limits)
+        buy_room_calculation = "".join(f"<li>{html.escape(item)}</li>" for item in fit.buy_room_calculation)
         classification_rows = ""
         if fit.sector != "Onbekend":
             classification_rows += (
@@ -1699,8 +1701,15 @@ def render_report(report: AdviceReport) -> str:
             <li>Gewicht positie: {html.escape(format_percent(fit.position_weight))}</li>
             <li>Richtmaximum: {html.escape(format_percent(fit.max_weight))}</li>
             <li>Ruimte tot richtmaximum: {html.escape(format_eur(fit.room_to_max))}</li>
+            <li>Maximale nieuwe koopruimte: <strong>{html.escape(format_eur(fit.max_new_buy_amount))}</strong></li>
+            <li>Praktische koopruimte: <strong>{html.escape(format_eur(fit.practical_buy_amount))}</strong></li>
             {classification_rows}
           </ul>
+          <details class="score-detail">
+            <summary>Toon koopruimte-berekening</summary>
+            <ul>{buy_room_calculation}</ul>
+            {f'<p class="evidence-meta">Beperkingen</p><ul>{buy_room_limits}</ul>' if buy_room_limits else ''}
+          </details>
           <ul class="assumption-list">{notes}</ul>
         </section>"""
 

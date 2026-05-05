@@ -146,6 +146,8 @@ class Advisor:
                     f"- Gewicht positie: {fit.position_weight:.1%}",
                     f"- Richtmaximum: {fit.max_weight:.1%}",
                     f"- Ruimte tot richtmaximum: EUR {fit.room_to_max:,.0f}",
+                    f"- Maximale nieuwe koopruimte: EUR {fit.max_new_buy_amount:,.0f}",
+                    f"- Praktische koopruimte: EUR {fit.practical_buy_amount:,.0f}",
                 ]
             )
             if fit.sector != "Onbekend":
@@ -155,6 +157,10 @@ class Advisor:
             if fit.sector == "Onbekend" and fit.theme == "Onbekend":
                 lines.append("- Sector/thema: nog niet geclassificeerd.")
             lines.append(f"- Transactieadvies: {fit.transaction_label}")
+            if fit.buy_room_calculation:
+                lines.extend(f"- Berekening koopruimte: {line}" for line in fit.buy_room_calculation)
+            if fit.buy_room_limits:
+                lines.extend(f"- Beperking koopruimte: {line}" for line in fit.buy_room_limits)
             lines.extend(f"- {note}" for note in fit.notes)
 
         if report.score.details:
@@ -185,6 +191,8 @@ class Advisor:
         exposures = portfolio_position_exposures(self.repository)
         assets = self.repository.portfolio_assets()
         asset_value = sum(asset.value for asset in assets)
+        cash_value = next((asset.value for asset in assets if asset.asset_type == "cash"), None)
+        cash_buffer = profile.cash_buffer if profile and profile.cash_buffer is not None else None
 
         position_values: dict[str, float] = {}
         for exposure in exposures:
@@ -210,7 +218,13 @@ class Advisor:
         risk_profile = profile.risk_profile if profile else "gebalanceerd"
         max_weight = {"defensief": 0.03, "gebalanceerd": 0.05, "offensief": 0.07}.get(risk_profile, 0.05)
         position_weight = target_value / total_wealth if total_wealth else 0.0
-        room_to_max = max(0.0, (total_wealth * max_weight) - target_value) if total_wealth else 0.0
+        position_room = max(0.0, (total_wealth * max_weight) - target_value) if total_wealth else 0.0
+        room_to_max = position_room
+        available_cash = (
+            max(0.0, cash_value - cash_buffer)
+            if cash_value is not None and cash_buffer is not None
+            else None
+        )
 
         notes: List[str] = []
         if profile is None:
@@ -256,6 +270,21 @@ class Advisor:
             theme_concentrated=classification.theme != "Onbekend" and theme_weight >= THEME_WARNING_THRESHOLD,
             total_wealth=total_wealth,
         )
+        buy_room = _buy_room(
+            score_total=score.total,
+            transaction_action=transaction_action,
+            total_wealth=total_wealth,
+            target_value=target_value,
+            max_weight=max_weight,
+            position_room=position_room,
+            cash_value=cash_value,
+            cash_buffer=cash_buffer,
+            available_cash=available_cash,
+            sector_name=classification.sector,
+            sector_concentrated=classification.sector != "Onbekend" and sector_weight >= SECTOR_WARNING_THRESHOLD,
+            theme_name=classification.theme,
+            theme_concentrated=classification.theme != "Onbekend" and theme_weight >= THEME_WARNING_THRESHOLD,
+        )
 
         return PortfolioFit(
             summary=summary,
@@ -266,12 +295,21 @@ class Advisor:
             total_wealth=total_wealth,
             transaction_action=transaction_action,
             transaction_label=TRANSACTION_LABELS[transaction_action],
+            position_room=position_room,
+            cash_value=cash_value,
+            cash_buffer=cash_buffer,
+            available_cash=available_cash,
+            max_new_buy_amount=buy_room["max_new_buy_amount"],
+            practical_buy_amount=buy_room["practical_buy_amount"],
+            buy_room_factor=buy_room["buy_room_factor"],
             sector=classification.sector,
             sector_value=sector_value,
             sector_weight=sector_weight,
             theme=classification.theme,
             theme_value=theme_value,
             theme_weight=theme_weight,
+            buy_room_limits=buy_room["limits"],
+            buy_room_calculation=buy_room["calculation"],
             notes=notes,
         )
 
@@ -346,3 +384,100 @@ def _transaction_action(
     if has_position:
         return "bijkopen_tot_max"
     return "kleine_startpositie"
+
+
+def _buy_room(
+    *,
+    score_total: float,
+    transaction_action: str,
+    total_wealth: float,
+    target_value: float,
+    max_weight: float,
+    position_room: float,
+    cash_value: Optional[float],
+    cash_buffer: Optional[float],
+    available_cash: Optional[float],
+    sector_name: str,
+    sector_concentrated: bool,
+    theme_name: str,
+    theme_concentrated: bool,
+) -> dict:
+    max_new_buy_amount = min(position_room, available_cash) if available_cash is not None else position_room
+    factor = _score_buy_factor(score_total)
+    limits: List[str] = [_score_buy_factor_label(score_total)]
+
+    if transaction_action in {"niet_kopen", "verkopen", "afbouwen"}:
+        factor = 0.0
+        limits.append(f"Transactieadvies {TRANSACTION_LABELS[transaction_action]}: praktische koopruimte op EUR 0.")
+    if sector_concentrated:
+        factor *= 0.5
+        limits.append(f"Sectorconcentratie {sector_name} boven {SECTOR_WARNING_THRESHOLD:.0%}: 50% rem.")
+    if theme_concentrated:
+        factor *= 0.5
+        limits.append(f"Themaconcentratie {theme_name} boven {THEME_WARNING_THRESHOLD:.0%}: 50% rem.")
+    if available_cash is not None and available_cash <= 0:
+        factor = 0.0
+        limits.append("Geen beschikbare beleggingscash boven de gewenste cashbuffer.")
+
+    practical_buy_amount = max_new_buy_amount * factor
+    calculation = [
+        (
+            "Positieruimte = totaal vermogen "
+            f"{_format_eur_plain(total_wealth)} × richtmaximum {max_weight:.1%} "
+            f"- huidige positie {_format_eur_plain(target_value)} = {_format_eur_plain(position_room)}."
+        )
+    ]
+    if available_cash is not None and cash_value is not None and cash_buffer is not None:
+        calculation.append(
+            "Beschikbare beleggingscash = cash/spaargeld "
+            f"{_format_eur_plain(cash_value)} - gewenste cashbuffer {_format_eur_plain(cash_buffer)} "
+            f"= {_format_eur_plain(available_cash)}."
+        )
+        calculation.append(
+            "Maximale nieuwe koopruimte = min(positieruimte "
+            f"{_format_eur_plain(position_room)}, beschikbare cash {_format_eur_plain(available_cash)}) "
+            f"= {_format_eur_plain(max_new_buy_amount)}."
+        )
+    else:
+        calculation.append(
+            "Cash en/of gewenste cashbuffer ontbreken; maximale nieuwe koopruimte volgt voorlopig alleen uit positieruimte."
+        )
+        calculation.append(f"Maximale nieuwe koopruimte = {_format_eur_plain(max_new_buy_amount)}.")
+    calculation.append(
+        f"Praktische koopruimte = {_format_eur_plain(max_new_buy_amount)} × {factor:.0%} "
+        f"= {_format_eur_plain(practical_buy_amount)}."
+    )
+
+    return {
+        "max_new_buy_amount": round(max_new_buy_amount, 2),
+        "practical_buy_amount": round(practical_buy_amount, 2),
+        "buy_room_factor": round(factor, 4),
+        "limits": limits,
+        "calculation": calculation,
+    }
+
+
+def _score_buy_factor(score_total: float) -> float:
+    if score_total < 60:
+        return 0.0
+    if score_total < 70:
+        return 0.25
+    if score_total < 78:
+        return 0.5
+    return 1.0
+
+
+def _score_buy_factor_label(score_total: float) -> str:
+    if score_total < 60:
+        return f"Score {score_total:.1f} lager dan 60: 0% koopruimte."
+    if score_total < 70:
+        return f"Score {score_total:.1f} tussen 60 en 70: 25% van de maximale koopruimte."
+    if score_total < 78:
+        return f"Score {score_total:.1f} tussen 70 en 78: 50% van de maximale koopruimte."
+    return f"Score {score_total:.1f} vanaf 78: 100% van de maximale koopruimte."
+
+
+def _format_eur_plain(value: Optional[float]) -> str:
+    if value is None:
+        return "EUR 0"
+    return f"EUR {value:,.0f}".replace(",", ".")
