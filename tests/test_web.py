@@ -15,7 +15,10 @@ from beleggingsraadgever.web import (
     archive_imported_snapshot,
     build_draft_report,
     build_page,
+    build_portfolio_page,
     ensure_snapshot_workflow,
+    save_portfolio_position,
+    save_portfolio_profile,
     save_case_note_workflow,
 )
 
@@ -243,6 +246,47 @@ class WebTests(unittest.TestCase):
             self.assertEqual(data["import_metadata"]["source_checksum"], archived.source_checksum)
             self.assertEqual(data["import_metadata"]["imported_from"], str(path))
             self.assertEqual(data["principles"][0]["title"], "APERAM: Dividend")
+
+    def test_portfolio_page_saves_profile_assets_and_position(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+
+            save_portfolio_profile(
+                repo,
+                {
+                    "age": ["52"],
+                    "annual_income": ["90000"],
+                    "horizon_years": ["12"],
+                    "cash_buffer": ["25000"],
+                    "risk_profile": ["gebalanceerd"],
+                    "asset_cash": ["25000"],
+                    "asset_house": ["500000"],
+                    "asset_gold": ["10000"],
+                    "asset_bitcoin": ["15000"],
+                    "asset_other": [""],
+                },
+            )
+            save_portfolio_position(
+                repo,
+                {
+                    "symbol": ["DEMO"],
+                    "account": ["Hoofdrekening"],
+                    "quantity": ["10"],
+                    "average_cost": ["90"],
+                    "currency": ["EUR"],
+                    "as_of": ["2026-05-05"],
+                },
+            )
+
+            html = build_portfolio_page(repo)
+
+            self.assertIn("Profiel & portefeuille", html)
+            self.assertIn("Effectenportefeuille", html)
+            self.assertIn("DEMO", html)
+            self.assertIn("EUR 550.000", html)
 
 
 def _fake_web_stockanalysis_lookup_fetch(url: str) -> str:

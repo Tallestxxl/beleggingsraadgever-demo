@@ -57,6 +57,35 @@ class PortfolioPosition:
 
 
 @dataclass(frozen=True)
+class InvestorProfile:
+    age: Optional[int] = None
+    annual_income: Optional[float] = None
+    horizon_years: Optional[int] = None
+    cash_buffer: Optional[float] = None
+    risk_profile: str = "gebalanceerd"
+
+
+@dataclass(frozen=True)
+class PortfolioAsset:
+    asset_type: str
+    value: float
+    currency: str = "EUR"
+    as_of: str = ""
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class PortfolioFit:
+    summary: str
+    position_value: float
+    position_weight: float
+    max_weight: float
+    room_to_max: float
+    total_wealth: float
+    notes: List[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class KnowledgeChunk:
     document_id: int
     chunk_index: int
@@ -121,3 +150,4 @@ class AdviceReport:
     data_freshness: Dict[str, str]
     assumptions: List[str] = field(default_factory=list)
     data_sources: List[DataSource] = field(default_factory=list)
+    portfolio_fit: Optional[PortfolioFit] = None

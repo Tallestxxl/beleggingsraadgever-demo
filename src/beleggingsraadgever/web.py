@@ -24,6 +24,7 @@ from .importer import (
     write_snapshot_template,
 )
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
+from .models import InvestorProfile, PortfolioAsset, PortfolioPosition
 from .real_data import DRAFTS_DIR, PROCESSED_DIR, seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
@@ -106,7 +107,7 @@ body {
 
 .ticker-form {
   display: grid;
-  grid-template-columns: 96px minmax(120px, 180px) auto auto;
+  grid-template-columns: 96px minmax(120px, 180px) auto auto auto;
   gap: 8px;
   align-items: end;
 }
@@ -130,6 +131,7 @@ input[type="text"] {
 }
 
 input[type="date"],
+input[type="number"],
 select,
 textarea {
   width: 100%;
@@ -156,9 +158,26 @@ textarea {
   text-transform: none;
 }
 
-.note-form .form-grid {
+.portfolio-form input[type="text"],
+.portfolio-form input[type="number"] {
+  text-transform: none;
+}
+
+.note-form .form-grid,
+.portfolio-form .form-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(160px, 220px);
+  gap: 12px;
+}
+
+.portfolio-form {
+  display: grid;
+  gap: 12px;
+}
+
+.asset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -397,6 +416,26 @@ h3 {
   margin: 6px 0 0;
 }
 
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.data-table th,
+.data-table td {
+  border-top: 1px solid var(--line);
+  padding: 8px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.data-table th {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
 ul {
   margin: 0;
   padding-left: 18px;
@@ -427,7 +466,9 @@ li + li {
     grid-template-columns: 1fr;
   }
 
-  .note-form .form-grid {
+  .note-form .form-grid,
+  .portfolio-form .form-grid,
+  .asset-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -475,12 +516,17 @@ def _make_handler(repository: SQLiteRepository):
             if parsed.path == "/health":
                 self._send_json({"ok": True})
                 return
-            if parsed.path not in {"/", "/analyze", "/workflow"}:
+            if parsed.path not in {"/", "/analyze", "/workflow", "/portfolio"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
 
             params = parse_qs(parsed.query)
             symbol = params.get("symbol", ["DEMO"])[0].strip().upper() or "DEMO"
+            if parsed.path == "/portfolio":
+                message = params.get("message", [""])[0].strip()
+                self._send_html(build_portfolio_page(repository, message=message or None))
+                return
+
             report = None
             error = None
             workflow = None
@@ -499,13 +545,38 @@ def _make_handler(repository: SQLiteRepository):
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
-            if parsed.path not in {"/workflow/import", "/workflow/collect", "/workflow/note"}:
+            if parsed.path not in {
+                "/workflow/import",
+                "/workflow/collect",
+                "/workflow/note",
+                "/portfolio/profile",
+                "/portfolio/position",
+            }:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
 
             body_length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(body_length).decode("utf-8")
             params = parse_qs(body)
+
+            if parsed.path == "/portfolio/profile":
+                try:
+                    save_portfolio_profile(repository, params)
+                except ValueError as error:
+                    self._send_html(build_portfolio_page(repository, error=str(error)))
+                    return
+                self._redirect("/portfolio?message=Profiel%20opgeslagen")
+                return
+
+            if parsed.path == "/portfolio/position":
+                try:
+                    save_portfolio_position(repository, params)
+                except ValueError as error:
+                    self._send_html(build_portfolio_page(repository, error=str(error)))
+                    return
+                self._redirect("/portfolio?message=Positie%20opgeslagen")
+                return
+
             symbol = params.get("symbol", [""])[0].strip().upper()
             if not symbol:
                 self._send_html(build_page(error="Geen ticker ontvangen."))
@@ -558,6 +629,11 @@ def _make_handler(repository: SQLiteRepository):
             self.send_header("Location", f"/analyze?symbol={quote_plus(symbol)}")
             self.end_headers()
 
+        def _redirect(self, location: str) -> None:
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", location)
+            self.end_headers()
+
         def log_message(self, format: str, *args) -> None:  # noqa: A002
             return
 
@@ -608,6 +684,11 @@ def build_page(
     else:
         content = '<div class="notice">DEMO staat klaar als eerste analyse.</div>'
 
+    return build_shell(symbol, content)
+
+
+def build_shell(symbol: str, content: str) -> str:
+    escaped_symbol = html.escape(symbol)
     return f"""<!doctype html>
 <html lang="nl">
 <head>
@@ -629,6 +710,7 @@ def build_page(
           <input id="symbol" name="symbol" type="text" value="{escaped_symbol}" autocomplete="off">
           <button type="submit">Analyseer</button>
           <a class="button secondary" href="/analyze?symbol=DEMO">Demo</a>
+          <a class="button secondary" href="/portfolio">Portefeuille</a>
         </form>
       </div>
     </header>
@@ -636,6 +718,306 @@ def build_page(
   </div>
 </body>
 </html>"""
+
+
+ASSET_LABELS = {
+    "cash": "Cash / spaargeld",
+    "house": "Huis",
+    "gold": "Goud",
+    "bitcoin": "Bitcoin",
+    "other": "Overig",
+}
+
+
+def build_portfolio_page(
+    repository: SQLiteRepository,
+    message: Optional[str] = None,
+    error: Optional[str] = None,
+) -> str:
+    return build_shell("DEMO", render_portfolio_dashboard(repository, message=message, error=error))
+
+
+def render_portfolio_dashboard(
+    repository: SQLiteRepository,
+    message: Optional[str] = None,
+    error: Optional[str] = None,
+) -> str:
+    profile = repository.investor_profile()
+    assets = repository.portfolio_assets()
+    positions = portfolio_position_rows(repository)
+    securities_value = sum(row["market_value"] for row in positions)
+    asset_value = sum(asset.value for asset in assets)
+    total_value = securities_value + asset_value
+    notice = ""
+    if error:
+        notice = f'<div class="notice">{html.escape(error)}</div>'
+    elif message:
+        notice = f'<div class="notice">{html.escape(message)}</div>'
+
+    return f"""
+    {notice}
+    <div class="report-header">
+      <div class="verdict">
+        <h2>Profiel & portefeuille</h2>
+        <p>Handmatige v1-laag voor persoonlijke limieten, vermogensverdeling en portefeuillefit per aandeel.</p>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Totaal vermogen</span>
+        <span class="metric-value">{format_eur(total_value)}</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Effecten</span>
+        <span class="metric-value">{format_eur(securities_value)}</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Overig</span>
+        <span class="metric-value">{format_eur(asset_value)}</span>
+      </div>
+    </div>
+    <div class="grid">
+      <div>
+        <section>
+          <h3>Persoonlijke situatie</h3>
+          {render_profile_form(profile, assets)}
+        </section>
+        <section>
+          <h3>Vermogensverdeling</h3>
+          {render_allocation_table(assets, securities_value, total_value)}
+        </section>
+      </div>
+      <div>
+        <section>
+          <h3>Nieuwe of bijgewerkte positie</h3>
+          {render_position_form()}
+        </section>
+        <section>
+          <h3>Effectenportefeuille</h3>
+          {render_positions_table(positions)}
+        </section>
+      </div>
+    </div>"""
+
+
+def render_profile_form(profile: Optional[InvestorProfile], assets: list[PortfolioAsset]) -> str:
+    asset_values = {asset.asset_type: asset.value for asset in assets}
+    risk_profile = profile.risk_profile if profile else "gebalanceerd"
+    risk_options = "".join(
+        f'<option value="{value}"{" selected" if risk_profile == value else ""}>{label}</option>'
+        for value, label in {
+            "defensief": "Defensief",
+            "gebalanceerd": "Gebalanceerd",
+            "offensief": "Offensief",
+        }.items()
+    )
+    asset_inputs = "".join(
+        f"""
+              <div>
+                <label for="asset-{html.escape(asset_type)}">{html.escape(label)}</label>
+                <input id="asset-{html.escape(asset_type)}" name="asset_{html.escape(asset_type)}" type="number" step="0.01" min="0" value="{format_input_number(asset_values.get(asset_type))}">
+              </div>"""
+        for asset_type, label in ASSET_LABELS.items()
+    )
+    return f"""
+          <form class="portfolio-form" method="post" action="/portfolio/profile">
+            <div class="form-grid">
+              <div>
+                <label for="age">Leeftijd</label>
+                <input id="age" name="age" type="number" min="0" step="1" value="{format_input_number(profile.age if profile else None)}">
+              </div>
+              <div>
+                <label for="annual-income">Bruto jaarinkomen</label>
+                <input id="annual-income" name="annual_income" type="number" min="0" step="100" value="{format_input_number(profile.annual_income if profile else None)}">
+              </div>
+            </div>
+            <div class="form-grid">
+              <div>
+                <label for="horizon-years">Beleggingshorizon in jaren</label>
+                <input id="horizon-years" name="horizon_years" type="number" min="0" step="1" value="{format_input_number(profile.horizon_years if profile else None)}">
+              </div>
+              <div>
+                <label for="cash-buffer">Gewenste cashbuffer</label>
+                <input id="cash-buffer" name="cash_buffer" type="number" min="0" step="100" value="{format_input_number(profile.cash_buffer if profile else None)}">
+              </div>
+            </div>
+            <div>
+              <label for="risk-profile">Risicoprofiel</label>
+              <select id="risk-profile" name="risk_profile">{risk_options}</select>
+            </div>
+            <div class="asset-grid">{asset_inputs}
+            </div>
+            <button type="submit">Sla profiel op</button>
+          </form>"""
+
+
+def render_position_form() -> str:
+    today = date.today().isoformat()
+    return f"""
+          <form class="portfolio-form" method="post" action="/portfolio/position">
+            <div class="form-grid">
+              <div>
+                <label for="position-symbol">Ticker</label>
+                <input id="position-symbol" name="symbol" type="text" autocomplete="off">
+              </div>
+              <div>
+                <label for="position-account">Account</label>
+                <input id="position-account" name="account" type="text" value="Hoofdrekening">
+              </div>
+            </div>
+            <div class="form-grid">
+              <div>
+                <label for="position-quantity">Aantal</label>
+                <input id="position-quantity" name="quantity" type="number" step="0.0001">
+              </div>
+              <div>
+                <label for="position-cost">Gemiddelde aankoopprijs</label>
+                <input id="position-cost" name="average_cost" type="number" step="0.01" min="0">
+              </div>
+            </div>
+            <div class="form-grid">
+              <div>
+                <label for="position-currency">Valuta</label>
+                <input id="position-currency" name="currency" type="text" value="EUR">
+              </div>
+              <div>
+                <label for="position-date">Peildatum</label>
+                <input id="position-date" name="as_of" type="date" value="{today}">
+              </div>
+            </div>
+            <button type="submit">Sla positie op</button>
+          </form>"""
+
+
+def render_allocation_table(assets: list[PortfolioAsset], securities_value: float, total_value: float) -> str:
+    rows = [
+        ("Effectenportefeuille", securities_value),
+        *[(ASSET_LABELS.get(asset.asset_type, asset.asset_type), asset.value) for asset in assets],
+    ]
+    if not rows or total_value <= 0:
+        return '<p class="evidence-meta">Nog geen vermogensgegevens opgeslagen.</p>'
+    body = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(label)}</td>
+          <td>{format_eur(value)}</td>
+          <td>{format_percent(value / total_value if total_value else 0)}</td>
+        </tr>"""
+        for label, value in rows
+        if value > 0
+    )
+    return f"""
+          <table class="data-table">
+            <thead><tr><th>Categorie</th><th>Waarde</th><th>Gewicht</th></tr></thead>
+            <tbody>{body}</tbody>
+          </table>"""
+
+
+def render_positions_table(positions: list[dict]) -> str:
+    if not positions:
+        return '<p class="evidence-meta">Nog geen posities opgeslagen.</p>'
+    body = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(row["symbol"])}</td>
+          <td>{html.escape(row["account"])}</td>
+          <td>{row["quantity"]:,.4f}</td>
+          <td>{format_eur(row["average_cost"])}</td>
+          <td>{format_eur(row["market_price"])}</td>
+          <td>{format_eur(row["market_value"])}</td>
+          <td>{format_percent(row["return_pct"]) if row["return_pct"] is not None else ""}</td>
+        </tr>"""
+        for row in positions
+    )
+    return f"""
+          <table class="data-table">
+            <thead>
+              <tr><th>Ticker</th><th>Account</th><th>Aantal</th><th>Kostprijs</th><th>Laatste koers</th><th>Waarde</th><th>Resultaat</th></tr>
+            </thead>
+            <tbody>{body}</tbody>
+          </table>"""
+
+
+def save_portfolio_profile(repository: SQLiteRepository, params: dict) -> None:
+    risk_profile = _first_param(params, "risk_profile") or "gebalanceerd"
+    if risk_profile not in {"defensief", "gebalanceerd", "offensief"}:
+        raise ValueError("Onbekend risicoprofiel.")
+    profile = InvestorProfile(
+        age=_parse_optional_int(_first_param(params, "age"), "leeftijd"),
+        annual_income=_parse_optional_float(_first_param(params, "annual_income"), "jaarinkomen"),
+        horizon_years=_parse_optional_int(_first_param(params, "horizon_years"), "beleggingshorizon"),
+        cash_buffer=_parse_optional_float(_first_param(params, "cash_buffer"), "cashbuffer"),
+        risk_profile=risk_profile,
+    )
+    repository.save_investor_profile(profile)
+
+    as_of = date.today().isoformat()
+    for asset_type in ASSET_LABELS:
+        value = _parse_optional_float(_first_param(params, f"asset_{asset_type}"), ASSET_LABELS[asset_type])
+        if value is None:
+            continue
+        repository.upsert_portfolio_asset(
+            PortfolioAsset(asset_type=asset_type, value=value, currency="EUR", as_of=as_of)
+        )
+
+
+def save_portfolio_position(repository: SQLiteRepository, params: dict) -> None:
+    symbol = _first_param(params, "symbol").upper()
+    if not symbol:
+        raise ValueError("Ticker is verplicht.")
+    as_of = _first_param(params, "as_of") or date.today().isoformat()
+    _required_iso_date(as_of)
+    repository.upsert_portfolio_position(
+        PortfolioPosition(
+            symbol=symbol,
+            quantity=_parse_required_float(_first_param(params, "quantity"), "aantal"),
+            average_cost=_parse_required_float(_first_param(params, "average_cost"), "gemiddelde aankoopprijs"),
+            currency=(_first_param(params, "currency") or "EUR").upper(),
+            account=_first_param(params, "account") or "Hoofdrekening",
+            as_of=as_of,
+        )
+    )
+
+
+def portfolio_position_rows(repository: SQLiteRepository) -> list[dict]:
+    rows = []
+    for position in repository.latest_portfolio_positions():
+        market_price = position.average_cost
+        try:
+            market_price = repository.latest_market_snapshot(position.symbol).close_price
+        except LookupError:
+            pass
+        market_value = position.quantity * market_price
+        cost_value = position.quantity * position.average_cost
+        return_pct = ((market_value - cost_value) / cost_value) if cost_value else None
+        rows.append(
+            {
+                "symbol": position.symbol,
+                "account": position.account,
+                "quantity": position.quantity,
+                "average_cost": position.average_cost,
+                "market_price": market_price,
+                "market_value": market_value,
+                "return_pct": return_pct,
+            }
+        )
+    return rows
+
+
+def format_eur(value: Optional[float]) -> str:
+    if value is None:
+        return "EUR 0"
+    return f"EUR {value:,.0f}".replace(",", ".")
+
+
+def format_percent(value: float) -> str:
+    return f"{value:.1%}"
+
+
+def format_input_number(value: Optional[float]) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, int) or float(value).is_integer():
+        return str(int(value))
+    return str(value)
 
 
 def ensure_snapshot_workflow(
@@ -765,6 +1147,34 @@ def _save_case_note(
 def _first_param(params: dict, name: str) -> str:
     values = params.get(name, [""])
     return values[0].strip() if values else ""
+
+
+def _parse_optional_float(value: str, label: str) -> Optional[float]:
+    if not value:
+        return None
+    try:
+        parsed = float(value.replace(",", "."))
+    except ValueError as error:
+        raise ValueError(f"{label} moet een getal zijn.") from error
+    if parsed < 0:
+        raise ValueError(f"{label} mag niet negatief zijn.")
+    return parsed
+
+
+def _parse_required_float(value: str, label: str) -> float:
+    parsed = _parse_optional_float(value, label)
+    if parsed is None:
+        raise ValueError(f"{label} is verplicht.")
+    return parsed
+
+
+def _parse_optional_int(value: str, label: str) -> Optional[int]:
+    parsed = _parse_optional_float(value, label)
+    if parsed is None:
+        return None
+    if int(parsed) != parsed:
+        raise ValueError(f"{label} moet een heel getal zijn.")
+    return int(parsed)
 
 
 def _principle_is_todo(principle: dict) -> bool:
@@ -1122,6 +1532,22 @@ def render_report(report: AdviceReport) -> str:
     if not sources:
         sources = '<p class="evidence-meta">Geen veldbronnen opgeslagen voor dit aandeel.</p>'
     assumptions = "".join(f"<li>{html.escape(item)}</li>" for item in report.assumptions)
+    portfolio_fit = ""
+    if report.portfolio_fit:
+        fit = report.portfolio_fit
+        notes = "".join(f"<li>{html.escape(note)}</li>" for note in fit.notes)
+        portfolio_fit = f"""
+        <section>
+          <h3>Portefeuillefit</h3>
+          <p class="summary">{html.escape(fit.summary)}</p>
+          <ul class="data-list">
+            <li>Huidige waarde positie: {html.escape(format_eur(fit.position_value))}</li>
+            <li>Gewicht positie: {html.escape(format_percent(fit.position_weight))}</li>
+            <li>Richtmaximum: {html.escape(format_percent(fit.max_weight))}</li>
+            <li>Ruimte tot richtmaximum: {html.escape(format_eur(fit.room_to_max))}</li>
+          </ul>
+          <ul class="assumption-list">{notes}</ul>
+        </section>"""
 
     return f"""
     <div class="report-header">
@@ -1166,6 +1592,7 @@ def render_report(report: AdviceReport) -> str:
           <h3>Dataversheid</h3>
           <ul class="data-list">{freshness}</ul>
         </section>
+        {portfolio_fit}
         <section>
           <details class="supporting-detail">
             <summary>Bronnen per cijfer</summary>

@@ -9,7 +9,17 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 from .knowledge import HashingVectorizer, chunk_text, cosine_similarity
-from .models import DataSource, FinancialSnapshot, KnowledgeHit, MacroObservation, MarketSnapshot, Principle
+from .models import (
+    DataSource,
+    FinancialSnapshot,
+    InvestorProfile,
+    KnowledgeHit,
+    MacroObservation,
+    MarketSnapshot,
+    PortfolioAsset,
+    PortfolioPosition,
+    Principle,
+)
 
 DEFAULT_DB_PATH = Path("data/local/beleggingsraadgever.sqlite")
 
@@ -113,6 +123,25 @@ CREATE TABLE IF NOT EXISTS portfolio_positions (
   as_of TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(symbol, account, as_of)
+);
+
+CREATE TABLE IF NOT EXISTS investor_profile (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  age INTEGER,
+  annual_income REAL,
+  horizon_years INTEGER,
+  cash_buffer REAL,
+  risk_profile TEXT NOT NULL DEFAULT 'gebalanceerd',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_assets (
+  asset_type TEXT PRIMARY KEY,
+  value REAL NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'EUR',
+  as_of TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS advice_runs (
@@ -412,6 +441,138 @@ class SQLiteRepository:
                     observation.unit,
                 ),
             )
+
+    def save_investor_profile(self, profile: InvestorProfile) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO investor_profile (
+                  id, age, annual_income, horizon_years, cash_buffer, risk_profile
+                )
+                VALUES (1, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  age=excluded.age,
+                  annual_income=excluded.annual_income,
+                  horizon_years=excluded.horizon_years,
+                  cash_buffer=excluded.cash_buffer,
+                  risk_profile=excluded.risk_profile,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    profile.age,
+                    profile.annual_income,
+                    profile.horizon_years,
+                    profile.cash_buffer,
+                    profile.risk_profile,
+                ),
+            )
+
+    def investor_profile(self) -> Optional[InvestorProfile]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT age, annual_income, horizon_years, cash_buffer, risk_profile
+                FROM investor_profile
+                WHERE id = 1
+                """
+            ).fetchone()
+        if row is None:
+            return None
+        return InvestorProfile(
+            age=row["age"],
+            annual_income=row["annual_income"],
+            horizon_years=row["horizon_years"],
+            cash_buffer=row["cash_buffer"],
+            risk_profile=row["risk_profile"],
+        )
+
+    def upsert_portfolio_asset(self, asset: PortfolioAsset) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO portfolio_assets (asset_type, value, currency, as_of, note)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(asset_type) DO UPDATE SET
+                  value=excluded.value,
+                  currency=excluded.currency,
+                  as_of=excluded.as_of,
+                  note=excluded.note,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (asset.asset_type, asset.value, asset.currency, asset.as_of, asset.note),
+            )
+
+    def portfolio_assets(self) -> List[PortfolioAsset]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT asset_type, value, currency, as_of, note
+                FROM portfolio_assets
+                ORDER BY asset_type
+                """
+            ).fetchall()
+        return [
+            PortfolioAsset(
+                asset_type=row["asset_type"],
+                value=row["value"],
+                currency=row["currency"],
+                as_of=row["as_of"],
+                note=row["note"],
+            )
+            for row in rows
+        ]
+
+    def upsert_portfolio_position(self, position: PortfolioPosition) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO portfolio_positions (
+                  symbol, quantity, average_cost, currency, account, as_of
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, account, as_of) DO UPDATE SET
+                  quantity=excluded.quantity,
+                  average_cost=excluded.average_cost,
+                  currency=excluded.currency
+                """,
+                (
+                    position.symbol.upper(),
+                    position.quantity,
+                    position.average_cost,
+                    position.currency,
+                    position.account,
+                    position.as_of,
+                ),
+            )
+
+    def latest_portfolio_positions(self) -> List[PortfolioPosition]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT p.symbol, p.quantity, p.average_cost, p.currency, p.account, p.as_of
+                FROM portfolio_positions p
+                JOIN (
+                  SELECT symbol, account, MAX(as_of) AS max_as_of
+                  FROM portfolio_positions
+                  GROUP BY symbol, account
+                ) latest
+                  ON latest.symbol = p.symbol
+                 AND latest.account = p.account
+                 AND latest.max_as_of = p.as_of
+                ORDER BY p.symbol, p.account
+                """
+            ).fetchall()
+        return [
+            PortfolioPosition(
+                symbol=row["symbol"],
+                quantity=row["quantity"],
+                average_cost=row["average_cost"],
+                currency=row["currency"],
+                account=row["account"],
+                as_of=row["as_of"],
+            )
+            for row in rows
+        ]
 
     def upsert_data_source(self, source: DataSource) -> None:
         with self.connect() as conn:
