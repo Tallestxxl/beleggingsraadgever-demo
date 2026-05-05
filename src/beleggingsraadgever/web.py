@@ -990,8 +990,8 @@ def render_positions_table(positions: list[dict]) -> str:
           <td>{html.escape(row["sector"])}</td>
           <td>{html.escape(row["theme"])}</td>
           <td>{row["quantity"]:,.4f}</td>
-          <td>{format_eur(row["average_cost"])}</td>
-          <td>{format_eur(row["market_price"])}</td>
+          <td>{format_eur_cents(row["average_cost"])}</td>
+          <td>{format_eur_cents(row["market_price"])}</td>
           <td>{format_eur(row["market_value"])}</td>
           <td>{format_percent(row["return_pct"]) if row["return_pct"] is not None else ""}</td>
           <td>{format_eur(row["result_value"]) if row["result_value"] is not None else ""}</td>
@@ -1114,6 +1114,13 @@ def format_eur(value: Optional[float]) -> str:
     if value is None:
         return "EUR 0"
     return f"EUR {value:,.0f}".replace(",", ".")
+
+
+def format_eur_cents(value: Optional[float]) -> str:
+    if value is None:
+        return "EUR 0,00"
+    formatted = f"EUR {value:,.2f}"
+    return formatted.replace(",", "_").replace(".", ",").replace("_", ".")
 
 
 def format_percent(value: float) -> str:
