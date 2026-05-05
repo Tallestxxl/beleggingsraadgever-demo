@@ -8,6 +8,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from beleggingsraadgever.advisor import Advisor
 from beleggingsraadgever.models import (
+    DataSource,
     FinancialSnapshot,
     InvestorProfile,
     MarketSnapshot,
@@ -115,6 +116,55 @@ class AdvisorTests(unittest.TestCase):
 
             self.assertEqual(report.portfolio_fit.sector, "Energy")
             self.assertEqual(report.portfolio_fit.theme, "Oil and gas")
+
+    def test_portfolio_fit_matches_existing_position_by_broker_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.upsert_portfolio_position(
+                PortfolioPosition(
+                    symbol="DSFIR",
+                    quantity=200,
+                    average_cost=107.89,
+                    currency="EUR",
+                    account="Test",
+                    as_of="2026-05-05",
+                )
+            )
+            repo.upsert_portfolio_price(
+                PortfolioPrice(symbol="DSFIR", as_of="2026-05-05", close_price=64.04, currency="EUR")
+            )
+            repo.upsert_portfolio_classification(
+                PortfolioClassification(symbol="DSFIR", sector="Consumer Staples", theme="Health and nutrition")
+            )
+
+            report = Advisor(repo).analyze_snapshots(
+                "DSM FIRMENICH",
+                FinancialSnapshot(
+                    symbol="DSM FIRMENICH",
+                    period_end="2025-12-31",
+                    period_type="TTM",
+                    revenue=9_034_000_000,
+                ),
+                MarketSnapshot(symbol="DSM FIRMENICH", as_of="2026-05-05", close_price=64.04, currency="EUR"),
+                data_sources=[
+                    DataSource(
+                        symbol="DSM FIRMENICH",
+                        field_name="close_price",
+                        value_label="Slotkoers EUR 64.04",
+                        source_name="StockAnalysis quote en koersen",
+                        source_url="https://stockanalysis.com/quote/ams/DSFIR/",
+                        source_date="2026-05-05",
+                        source_quality="marktdata",
+                    )
+                ],
+            )
+
+            self.assertAlmostEqual(report.portfolio_fit.position_value, 12808)
+            self.assertEqual(report.portfolio_fit.sector, "Consumer Staples")
+            self.assertEqual(report.portfolio_fit.theme, "Health and nutrition")
+            self.assertNotIn("Geen bestaande positie", " ".join(report.portfolio_fit.notes))
+            self.assertIn("DSFIR", " ".join(report.portfolio_fit.notes))
 
     def test_transaction_advice_suggests_small_start_position_for_strong_new_idea(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

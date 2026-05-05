@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from .identity import candidate_portfolio_symbols
 from .indicators import build_score, conviction_from_score, verdict_from_score
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeHit, MarketSnapshot, PortfolioFit
 from .portfolio import effective_classification, exposure_buckets, portfolio_position_exposures
@@ -52,7 +53,7 @@ class Advisor:
         data_sources = (
             data_sources if data_sources is not None else self.repository.data_sources_for_symbol(normalized_symbol)
         )
-        portfolio_fit = self._build_portfolio_fit(normalized_symbol, market, score)
+        portfolio_fit = self._build_portfolio_fit(normalized_symbol, market, score, data_sources=data_sources)
 
         summary = self._build_summary(normalized_symbol, financial, market, verdict, score)
         data_freshness = {
@@ -186,27 +187,40 @@ class Advisor:
 
         return "\n".join(lines)
 
-    def _build_portfolio_fit(self, symbol: str, market: MarketSnapshot, score) -> PortfolioFit:
+    def _build_portfolio_fit(
+        self,
+        symbol: str,
+        market: MarketSnapshot,
+        score,
+        *,
+        data_sources: Optional[List[DataSource]] = None,
+    ) -> PortfolioFit:
         profile = self.repository.investor_profile()
         exposures = portfolio_position_exposures(self.repository)
         assets = self.repository.portfolio_assets()
         asset_value = sum(asset.value for asset in assets)
         cash_value = next((asset.value for asset in assets if asset.asset_type == "cash"), None)
         cash_buffer = profile.cash_buffer if profile and profile.cash_buffer is not None else None
+        symbol_candidates = candidate_portfolio_symbols(symbol, data_sources or [])
 
         position_values: dict[str, float] = {}
         for exposure in exposures:
             symbol_key = exposure.position.symbol.upper()
             position_values[symbol_key] = position_values.get(symbol_key, 0.0) + exposure.market_value
 
-        target_value = position_values.get(symbol.upper(), 0.0)
-        if target_value == 0 and any(exposure.position.symbol.upper() == symbol.upper() for exposure in exposures):
+        matched_symbols = [candidate for candidate in symbol_candidates if candidate in position_values]
+        target_value = sum(position_values[candidate] for candidate in matched_symbols)
+        target_positions = [
+            exposure for exposure in exposures if exposure.position.symbol.upper() in matched_symbols
+        ]
+        if target_value == 0 and target_positions:
             target_value = market.close_price * sum(
-                exposure.position.quantity for exposure in exposures if exposure.position.symbol.upper() == symbol.upper()
+                exposure.position.quantity for exposure in target_positions
             )
 
         total_wealth = asset_value + sum(position_values.values())
-        classification = effective_classification(self.repository, symbol)
+        classification_symbol = _classification_symbol(self.repository, symbol_candidates, matched_symbols, symbol)
+        classification = effective_classification(self.repository, classification_symbol)
         sector_buckets = exposure_buckets(exposures, by="sector", total_wealth=total_wealth)
         theme_buckets = exposure_buckets(exposures, by="theme", total_wealth=total_wealth)
         sector_bucket = next((bucket for bucket in sector_buckets if bucket.label == classification.sector), None)
@@ -235,6 +249,8 @@ class Advisor:
             notes.append("Portefeuille ontbreekt nog; voer posities en overige vermogenscategorieën in.")
         if target_value == 0:
             notes.append(f"Geen bestaande positie in {symbol}; dit aandeel zou een nieuwe positie zijn.")
+        elif matched_symbols and symbol.upper() not in matched_symbols:
+            notes.append(f"Bestaande positie gevonden via portefeuillesymbool {', '.join(matched_symbols)}.")
         if position_weight > max_weight:
             notes.append("Huidig gewicht ligt boven het richtmaximum; bijkopen ligt niet voor de hand.")
         elif total_wealth:
@@ -384,6 +400,19 @@ def _transaction_action(
     if has_position:
         return "bijkopen_tot_max"
     return "kleine_startpositie"
+
+
+def _classification_symbol(
+    repository: SQLiteRepository,
+    symbol_candidates: list[str],
+    matched_symbols: list[str],
+    fallback_symbol: str,
+) -> str:
+    for candidate in matched_symbols + symbol_candidates:
+        stored = repository.portfolio_classification(candidate)
+        if stored is not None and (stored.sector != "Onbekend" or stored.theme != "Onbekend"):
+            return candidate
+    return fallback_symbol
 
 
 def _buy_room(

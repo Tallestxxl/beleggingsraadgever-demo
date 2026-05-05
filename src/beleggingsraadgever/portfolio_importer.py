@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from .classification import classify_symbol
+from .identity import normalize_broker_name
 from .models import (
     PortfolioClassification,
     PortfolioPerformanceSummary,
@@ -18,35 +19,6 @@ from .models import (
     PortfolioPrice,
 )
 from .storage import SQLiteRepository
-
-
-BROKER_NAME_ALIASES = {
-    "AALBERTS": "AALB",
-    "AKZO NOBEL": "AKZA",
-    "ALFEN": "ALFEN",
-    "APERAM": "APERAM",
-    "ASMI": "ASMI",
-    "ASML HOLDING": "ASML",
-    "AVANTIUM": "AVTX",
-    "BAM GROEP": "BAMNB",
-    "BE SEMICONDUCTOR IND": "BESI",
-    "CORBION": "CRBN",
-    "DSM FIRMENICH": "DSFIR",
-    "EBUSCO HOLDING": "EBUS",
-    "FUGRO": "FUGRO",
-    "INTUITIVE MACHINES": "LUNR",
-    "INVESC FTSE RAFI US": "INVESCO_RAFI_US",
-    "KPN": "KPN",
-    "NEDAP": "NEDAP",
-    "RANDSTAD": "RAND",
-    "REDWIRE": "RDW",
-    "ROCKET LAB": "RKLB",
-    "SHELL": "SHELL",
-    "TKH GROUP": "TWEKA",
-    "UNILEVER": "UNA",
-    "VANG FTSE ALL WORLD": "VWRL",
-    "XTRACK HEALTH CARE": "XDWH",
-}
 
 
 @dataclass(frozen=True)
@@ -162,14 +134,6 @@ def import_portfolio_csv(repository: SQLiteRepository, path: Path) -> PortfolioC
     )
 
 
-def normalize_broker_name(name: str) -> str:
-    cleaned = _clean_name(name)
-    for prefix, symbol in BROKER_NAME_ALIASES.items():
-        if cleaned == prefix or cleaned.startswith(prefix + " "):
-            return symbol
-    return re.sub(r"[^A-Z0-9]+", "_", cleaned).strip("_")[:24]
-
-
 def _find_header_index(rows: list[list[str]]) -> int:
     for index, row in enumerate(rows):
         normalized = [cell.strip() for cell in row]
@@ -181,12 +145,6 @@ def _find_header_index(rows: list[list[str]]) -> int:
 def _record_from_row(headers: list[str], row: list[str]) -> dict[str, str]:
     padded = row + [""] * max(0, len(headers) - len(row))
     return {header: padded[index].strip() for index, header in enumerate(headers) if header}
-
-
-def _clean_name(name: str) -> str:
-    cleaned = " ".join(name.upper().replace("/KON/", "").replace("  ", " ").split())
-    cleaned = cleaned.replace(" PLC", "").replace(" /KON/", "")
-    return cleaned
 
 
 def _parse_number(value: str) -> Optional[float]:
