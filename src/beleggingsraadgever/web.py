@@ -983,13 +983,12 @@ def render_exposure_table(buckets) -> str:
           <td>{html.escape(bucket.label)}</td>
           <td>{format_eur(bucket.value)}</td>
           <td>{format_percent(bucket.securities_weight)}</td>
-          <td>{format_percent(bucket.total_weight)}</td>
         </tr>"""
         for bucket in buckets
     )
     return f"""
           <table class="data-table">
-            <thead><tr><th>Label</th><th>Waarde</th><th>% effecten</th><th>% totaal</th></tr></thead>
+            <thead><tr><th>Label</th><th>Waarde</th><th>% effecten</th></tr></thead>
             <tbody>{body}</tbody>
           </table>"""
 
