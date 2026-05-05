@@ -29,9 +29,9 @@ PEERS_BY_SYMBOL = {
     "DSM FIRMENICH": ["CORBION", "UNILEVER"],
     "DSFIR": ["CORBION", "UNILEVER"],
     "CORBION": ["DSM FIRMENICH", "UNILEVER"],
-    "FUGRO": ["VOPAK", "NEDAP"],
-    "VOPAK": ["FUGRO", "NEDAP"],
-    "NEDAP": ["FUGRO", "VOPAK"],
+    "FUGRO": ["SBMO", "SUBC", "CGG"],
+    "VOPAK": ["KMI", "OKE", "GIB_A"],
+    "NEDAP": ["TWEKA"],
 }
 
 PEERS_BY_THEME = {
@@ -40,7 +40,7 @@ PEERS_BY_THEME = {
     "Steel and metals": ["APERAM"],
     "Health and nutrition": ["DSM FIRMENICH", "CORBION", "UNILEVER"],
     "Global consumer staples": ["UNILEVER", "DSM FIRMENICH", "CORBION"],
-    "Offshore services": ["FUGRO", "VOPAK"],
+    "Offshore services": ["FUGRO", "SBMO", "SUBC", "CGG"],
     "Technology hardware": ["NEDAP", "TKH GROUP"],
 }
 

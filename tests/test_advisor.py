@@ -215,6 +215,53 @@ class AdvisorTests(unittest.TestCase):
 
             self.assertIsNone(report.peer_analysis)
 
+    def test_nedap_is_not_compared_with_fugro_or_vopak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.upsert_portfolio_classification(
+                PortfolioClassification(symbol="NEDAP", sector="Industrials", theme="Technology hardware")
+            )
+            for symbol in ["FUGRO", "VOPAK"]:
+                repo.upsert_financial_snapshot(
+                    FinancialSnapshot(
+                        symbol=symbol,
+                        period_end="2025-12-31",
+                        period_type="TTM",
+                        revenue=1_000_000_000,
+                        operating_margin=0.20,
+                    )
+                )
+                repo.upsert_market_snapshot(
+                    MarketSnapshot(
+                        symbol=symbol,
+                        as_of="2026-05-05",
+                        close_price=100,
+                        currency="EUR",
+                        pe_ratio=20,
+                    )
+                )
+
+            report = Advisor(repo).analyze_snapshots(
+                "NEDAP",
+                FinancialSnapshot(
+                    symbol="NEDAP",
+                    period_end="2025-12-31",
+                    period_type="TTM",
+                    revenue=279_800_000,
+                    operating_margin=0.117,
+                ),
+                MarketSnapshot(
+                    symbol="NEDAP",
+                    as_of="2026-05-05",
+                    close_price=55,
+                    currency="EUR",
+                    pe_ratio=22.9,
+                ),
+            )
+
+            self.assertIsNone(report.peer_analysis)
+
     def test_portfolio_fit_matches_existing_position_by_broker_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")
