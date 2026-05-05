@@ -99,6 +99,15 @@ class PortfolioClassification:
 
 
 @dataclass(frozen=True)
+class PortfolioAlias:
+    portfolio_symbol: str
+    alias_key: str
+    alias_type: str
+    raw_value: str = ""
+    source: str = ""
+
+
+@dataclass(frozen=True)
 class InvestorProfile:
     age: Optional[int] = None
     annual_income: Optional[float] = None

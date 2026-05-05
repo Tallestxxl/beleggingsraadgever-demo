@@ -762,6 +762,7 @@ def render_portfolio_dashboard(
     performance_summary = repository.latest_portfolio_performance_summary()
     position_performance = repository.latest_portfolio_position_performances()
     positions = portfolio_position_rows(exposures, position_performance)
+    aliases = repository.portfolio_aliases()
     securities_value = sum(row["market_value"] for row in positions)
     asset_value = sum(asset.value for asset in assets)
     total_value = securities_value + asset_value
@@ -826,6 +827,10 @@ def render_portfolio_dashboard(
         <section>
           <h3>Effectenportefeuille</h3>
           {render_positions_table(positions)}
+        </section>
+        <section>
+          <h3>Identiteitskoppelingen</h3>
+          {render_aliases_table(aliases)}
         </section>
       </div>
     </div>"""
@@ -1004,6 +1009,34 @@ def render_positions_table(positions: list[dict]) -> str:
             <thead>
               <tr><th>Ticker</th><th>Sector</th><th>Thema</th><th>Aantal</th><th>Kostprijs</th><th>Laatste koers</th><th>Waarde</th><th>Resultaat %</th><th>Resultaat EUR</th><th>Dividend/coupons</th></tr>
             </thead>
+            <tbody>{body}</tbody>
+          </table>"""
+
+
+def render_aliases_table(aliases) -> str:
+    if not aliases:
+        return '<p class="evidence-meta">Nog geen alias-koppelingen opgeslagen.</p>'
+    visible_aliases = [
+        alias
+        for alias in aliases
+        if alias.alias_key != alias.portfolio_symbol or alias.alias_type != "portfolio_symbol"
+    ]
+    if not visible_aliases:
+        return '<p class="evidence-meta">Alleen directe tickers zijn bekend; nog geen alternatieve namen of provider-symbolen.</p>'
+    body = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(alias.alias_key)}</td>
+          <td>{html.escape(alias.portfolio_symbol)}</td>
+          <td>{html.escape(alias.alias_type)}</td>
+          <td>{html.escape(alias.raw_value)}</td>
+          <td>{html.escape(alias.source)}</td>
+        </tr>"""
+        for alias in visible_aliases
+    )
+    return f"""
+          <table class="data-table">
+            <thead><tr><th>Alias</th><th>Portefeuillesymbool</th><th>Type</th><th>Origineel</th><th>Bron</th></tr></thead>
             <tbody>{body}</tbody>
           </table>"""
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from .identity import candidate_portfolio_symbols
+from .identity import aliases_for_data_sources, candidate_portfolio_symbols
 from .indicators import build_score, conviction_from_score, verdict_from_score
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeHit, MarketSnapshot, PortfolioFit
 from .portfolio import effective_classification, exposure_buckets, portfolio_position_exposures
@@ -202,6 +202,10 @@ class Advisor:
         cash_value = next((asset.value for asset in assets if asset.asset_type == "cash"), None)
         cash_buffer = profile.cash_buffer if profile and profile.cash_buffer is not None else None
         symbol_candidates = candidate_portfolio_symbols(symbol, data_sources or [])
+        resolved_aliases = self.repository.resolve_portfolio_aliases(symbol_candidates)
+        for resolved_symbol in resolved_aliases.values():
+            if resolved_symbol not in symbol_candidates:
+                symbol_candidates.append(resolved_symbol)
 
         position_values: dict[str, float] = {}
         for exposure in exposures:
@@ -213,6 +217,11 @@ class Advisor:
         target_positions = [
             exposure for exposure in exposures if exposure.position.symbol.upper() in matched_symbols
         ]
+        if len(matched_symbols) == 1:
+            matched_symbol = matched_symbols[0]
+            self.repository.upsert_portfolio_aliases(
+                aliases_for_data_sources(matched_symbol, data_sources or [], source="analysis")
+            )
         if target_value == 0 and target_positions:
             target_value = market.close_price * sum(
                 exposure.position.quantity for exposure in target_positions

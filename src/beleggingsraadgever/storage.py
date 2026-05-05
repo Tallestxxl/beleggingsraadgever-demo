@@ -17,6 +17,7 @@ from .models import (
     MacroObservation,
     MarketSnapshot,
     PortfolioAsset,
+    PortfolioAlias,
     PortfolioClassification,
     PortfolioPerformanceSummary,
     PortfolioPrice,
@@ -194,6 +195,15 @@ CREATE TABLE IF NOT EXISTS portfolio_classifications (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS portfolio_aliases (
+  alias_key TEXT PRIMARY KEY,
+  portfolio_symbol TEXT NOT NULL,
+  alias_type TEXT NOT NULL,
+  raw_value TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS advice_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   symbol TEXT NOT NULL,
@@ -244,6 +254,43 @@ class SQLiteRepository:
     def init(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            self._backfill_portfolio_aliases(conn)
+
+    def _upsert_portfolio_alias(self, conn: sqlite3.Connection, alias: PortfolioAlias) -> None:
+        from .identity import normalize_symbol
+
+        alias_key = normalize_symbol(alias.alias_key)
+        portfolio_symbol = normalize_symbol(alias.portfolio_symbol)
+        if not alias_key or not portfolio_symbol:
+            return
+        conn.execute(
+            """
+            INSERT INTO portfolio_aliases (alias_key, portfolio_symbol, alias_type, raw_value, source)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(alias_key) DO UPDATE SET
+              portfolio_symbol=excluded.portfolio_symbol,
+              alias_type=excluded.alias_type,
+              raw_value=excluded.raw_value,
+              source=excluded.source,
+              updated_at=CURRENT_TIMESTAMP
+            """,
+            (alias_key, portfolio_symbol, alias.alias_type, alias.raw_value, alias.source),
+        )
+
+    def _backfill_portfolio_aliases(self, conn: sqlite3.Connection) -> None:
+        from .identity import BROKER_NAME_ALIASES, aliases_for_portfolio_input
+
+        rows = conn.execute("SELECT DISTINCT symbol FROM portfolio_positions").fetchall()
+        existing_symbols = {row["symbol"] for row in rows}
+        for symbol in existing_symbols:
+            for alias in aliases_for_portfolio_input(symbol, source="backfill"):
+                self._upsert_portfolio_alias(conn, alias)
+
+        for broker_name, portfolio_symbol in BROKER_NAME_ALIASES.items():
+            if portfolio_symbol not in existing_symbols:
+                continue
+            for alias in aliases_for_portfolio_input(portfolio_symbol, raw_name=broker_name, source="known_alias"):
+                self._upsert_portfolio_alias(conn, alias)
 
     def add_document(
         self,
@@ -594,6 +641,10 @@ class SQLiteRepository:
                     position.as_of,
                 ),
             )
+            from .identity import aliases_for_portfolio_input
+
+            for alias in aliases_for_portfolio_input(position.symbol, source="portfolio_position"):
+                self._upsert_portfolio_alias(conn, alias)
 
     def upsert_portfolio_price(self, price: PortfolioPrice) -> None:
         with self.connect() as conn:
@@ -768,6 +819,82 @@ class SQLiteRepository:
             ).fetchall()
         return [
             PortfolioClassification(symbol=row["symbol"], sector=row["sector"], theme=row["theme"])
+            for row in rows
+        ]
+
+    def upsert_portfolio_alias(self, alias: PortfolioAlias) -> None:
+        with self.connect() as conn:
+            self._upsert_portfolio_alias(conn, alias)
+
+    def upsert_portfolio_aliases(self, aliases: Iterable[PortfolioAlias]) -> None:
+        with self.connect() as conn:
+            for alias in aliases:
+                self._upsert_portfolio_alias(conn, alias)
+
+    def resolve_portfolio_aliases(self, aliases: Iterable[str]) -> dict[str, str]:
+        from .identity import normalize_symbol
+
+        normalized = []
+        seen = set()
+        for alias in aliases:
+            key = normalize_symbol(alias)
+            if key and key not in seen:
+                normalized.append(key)
+                seen.add(key)
+        if not normalized:
+            return {}
+
+        placeholders = ", ".join("?" for _ in normalized)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT alias_key, portfolio_symbol
+                FROM portfolio_aliases
+                WHERE alias_key IN ({placeholders})
+                """,
+                normalized,
+            ).fetchall()
+        return {row["alias_key"]: row["portfolio_symbol"] for row in rows}
+
+    def portfolio_aliases(self) -> List[PortfolioAlias]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT portfolio_symbol, alias_key, alias_type, raw_value, source
+                FROM portfolio_aliases
+                ORDER BY portfolio_symbol, alias_type, alias_key
+                """
+            ).fetchall()
+        return [
+            PortfolioAlias(
+                portfolio_symbol=row["portfolio_symbol"],
+                alias_key=row["alias_key"],
+                alias_type=row["alias_type"],
+                raw_value=row["raw_value"],
+                source=row["source"],
+            )
+            for row in rows
+        ]
+
+    def portfolio_aliases_for_symbol(self, symbol: str) -> List[PortfolioAlias]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT portfolio_symbol, alias_key, alias_type, raw_value, source
+                FROM portfolio_aliases
+                WHERE portfolio_symbol = ?
+                ORDER BY alias_type, alias_key
+                """,
+                (symbol.upper(),),
+            ).fetchall()
+        return [
+            PortfolioAlias(
+                portfolio_symbol=row["portfolio_symbol"],
+                alias_key=row["alias_key"],
+                alias_type=row["alias_type"],
+                raw_value=row["raw_value"],
+                source=row["source"],
+            )
             for row in rows
         ]
 

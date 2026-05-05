@@ -40,6 +40,13 @@ Aandelen,"","","","","","","","",""
             self.assertEqual(positions[0].average_cost, 35.24)
             self.assertEqual(repo.latest_portfolio_price("APERAM").close_price, 46.88)
             self.assertEqual(repo.portfolio_classification("BESI").sector, "Semiconductors")
+            self.assertEqual(
+                repo.resolve_portfolio_aliases(["BE_SEMICONDUCTOR_IND"]),
+                {"BE_SEMICONDUCTOR_IND": "BESI"},
+            )
+            besi_aliases = {alias.alias_key for alias in repo.portfolio_aliases_for_symbol("BESI")}
+            self.assertIn("BESI", besi_aliases)
+            self.assertIn("BE_SEMICONDUCTOR_IND", besi_aliases)
             summary = repo.latest_portfolio_performance_summary()
             self.assertIsNotNone(summary)
             self.assertEqual(summary.period_label, "2026")

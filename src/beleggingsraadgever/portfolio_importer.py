@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from .classification import classify_symbol
-from .identity import normalize_broker_name
+from .identity import aliases_for_portfolio_input, normalize_broker_name
 from .models import (
     PortfolioClassification,
     PortfolioPerformanceSummary,
@@ -92,6 +92,9 @@ def import_portfolio_csv(repository: SQLiteRepository, path: Path) -> PortfolioC
                 account=account,
                 as_of=as_of,
             )
+        )
+        repository.upsert_portfolio_aliases(
+            aliases_for_portfolio_input(symbol, raw_name=name, source="portfolio_csv")
         )
         classification = classify_symbol(symbol)
         repository.upsert_portfolio_classification(

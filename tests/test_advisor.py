@@ -13,6 +13,7 @@ from beleggingsraadgever.models import (
     InvestorProfile,
     MarketSnapshot,
     PortfolioClassification,
+    PortfolioAlias,
     PortfolioPosition,
     PortfolioPrice,
     PortfolioAsset,
@@ -165,6 +166,61 @@ class AdvisorTests(unittest.TestCase):
             self.assertEqual(report.portfolio_fit.theme, "Health and nutrition")
             self.assertNotIn("Geen bestaande positie", " ".join(report.portfolio_fit.notes))
             self.assertIn("DSFIR", " ".join(report.portfolio_fit.notes))
+
+    def test_analysis_learns_provider_alias_for_imported_broker_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.upsert_portfolio_position(
+                PortfolioPosition(
+                    symbol="LAM_RESEARCH",
+                    quantity=10,
+                    average_cost=90,
+                    currency="USD",
+                    account="Test",
+                    as_of="2026-05-05",
+                )
+            )
+            repo.upsert_portfolio_price(
+                PortfolioPrice(symbol="LAM_RESEARCH", as_of="2026-05-05", close_price=100, currency="USD")
+            )
+            repo.upsert_portfolio_alias(
+                PortfolioAlias(
+                    portfolio_symbol="LAM_RESEARCH",
+                    alias_key="LAM_RESEARCH",
+                    alias_type="broker_name",
+                    raw_value="LAM RESEARCH",
+                    source="portfolio_csv",
+                )
+            )
+            data_sources = [
+                DataSource(
+                    symbol="LAM RESEARCH",
+                    field_name="close_price",
+                    value_label="Slotkoers USD 100",
+                    source_name="StockAnalysis quote en koersen",
+                    source_url="https://stockanalysis.com/stocks/lrcx/",
+                    source_date="2026-05-05",
+                    source_quality="marktdata",
+                )
+            ]
+
+            first_report = Advisor(repo).analyze_snapshots(
+                "LAM RESEARCH",
+                FinancialSnapshot(symbol="LAM RESEARCH", period_end="2025-12-31", period_type="TTM", revenue=1),
+                MarketSnapshot(symbol="LAM RESEARCH", as_of="2026-05-05", close_price=100, currency="USD"),
+                data_sources=data_sources,
+            )
+            self.assertAlmostEqual(first_report.portfolio_fit.position_value, 1000)
+            self.assertEqual(repo.resolve_portfolio_aliases(["LRCX"]), {"LRCX": "LAM_RESEARCH"})
+
+            second_report = Advisor(repo).analyze_snapshots(
+                "LRCX",
+                FinancialSnapshot(symbol="LRCX", period_end="2025-12-31", period_type="TTM", revenue=1),
+                MarketSnapshot(symbol="LRCX", as_of="2026-05-05", close_price=100, currency="USD"),
+            )
+            self.assertAlmostEqual(second_report.portfolio_fit.position_value, 1000)
+            self.assertNotIn("Geen bestaande positie", " ".join(second_report.portfolio_fit.notes))
 
     def test_transaction_advice_suggests_small_start_position_for_strong_new_idea(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
