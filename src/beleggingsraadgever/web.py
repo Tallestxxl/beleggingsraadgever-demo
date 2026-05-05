@@ -24,7 +24,9 @@ from .importer import (
     write_snapshot_template,
 )
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
-from .models import InvestorProfile, PortfolioAsset, PortfolioPosition
+from .classification import classify_symbol
+from .models import InvestorProfile, PortfolioAsset, PortfolioClassification, PortfolioPosition
+from .portfolio import exposure_buckets, portfolio_position_exposures
 from .portfolio_importer import import_portfolio_csv
 from .real_data import DRAFTS_DIR, PROCESSED_DIR, seed_curated_snapshots
 from .sample_data import seed_demo
@@ -755,7 +757,8 @@ def render_portfolio_dashboard(
 ) -> str:
     profile = repository.investor_profile()
     assets = repository.portfolio_assets()
-    positions = portfolio_position_rows(repository)
+    exposures = portfolio_position_exposures(repository)
+    positions = portfolio_position_rows(exposures)
     securities_value = sum(row["market_value"] for row in positions)
     asset_value = sum(asset.value for asset in assets)
     total_value = securities_value + asset_value
@@ -794,6 +797,14 @@ def render_portfolio_dashboard(
         <section>
           <h3>Vermogensverdeling</h3>
           {render_allocation_table(assets, securities_value, total_value)}
+        </section>
+        <section>
+          <h3>Sectorverdeling effecten</h3>
+          {render_exposure_table(exposure_buckets(exposures, by="sector", total_wealth=total_value))}
+        </section>
+        <section>
+          <h3>Themaverdeling effecten</h3>
+          {render_exposure_table(exposure_buckets(exposures, by="theme", total_wealth=total_value))}
         </section>
       </div>
       <div>
@@ -944,7 +955,8 @@ def render_positions_table(positions: list[dict]) -> str:
         f"""
         <tr>
           <td>{html.escape(row["symbol"])}</td>
-          <td>{html.escape(row["account"])}</td>
+          <td>{html.escape(row["sector"])}</td>
+          <td>{html.escape(row["theme"])}</td>
           <td>{row["quantity"]:,.4f}</td>
           <td>{format_eur(row["average_cost"])}</td>
           <td>{format_eur(row["market_price"])}</td>
@@ -956,8 +968,28 @@ def render_positions_table(positions: list[dict]) -> str:
     return f"""
           <table class="data-table">
             <thead>
-              <tr><th>Ticker</th><th>Account</th><th>Aantal</th><th>Kostprijs</th><th>Laatste koers</th><th>Waarde</th><th>Resultaat</th></tr>
+              <tr><th>Ticker</th><th>Sector</th><th>Thema</th><th>Aantal</th><th>Kostprijs</th><th>Laatste koers</th><th>Waarde</th><th>Resultaat</th></tr>
             </thead>
+            <tbody>{body}</tbody>
+          </table>"""
+
+
+def render_exposure_table(buckets) -> str:
+    if not buckets:
+        return '<p class="evidence-meta">Nog geen effectenposities opgeslagen.</p>'
+    body = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(bucket.label)}</td>
+          <td>{format_eur(bucket.value)}</td>
+          <td>{format_percent(bucket.securities_weight)}</td>
+          <td>{format_percent(bucket.total_weight)}</td>
+        </tr>"""
+        for bucket in buckets
+    )
+    return f"""
+          <table class="data-table">
+            <thead><tr><th>Label</th><th>Waarde</th><th>% effecten</th><th>% totaal</th></tr></thead>
             <tbody>{body}</tbody>
           </table>"""
 
@@ -1001,6 +1033,10 @@ def save_portfolio_position(repository: SQLiteRepository, params: dict) -> None:
             as_of=as_of,
         )
     )
+    classification = classify_symbol(symbol)
+    repository.upsert_portfolio_classification(
+        PortfolioClassification(symbol=symbol, sector=classification.sector, theme=classification.theme)
+    )
 
 
 def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) -> str:
@@ -1011,30 +1047,21 @@ def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) ->
     return result.summary
 
 
-def portfolio_position_rows(repository: SQLiteRepository) -> list[dict]:
+def portfolio_position_rows(exposures) -> list[dict]:
     rows = []
-    for position in repository.latest_portfolio_positions():
-        market_price = position.average_cost
-        portfolio_price = repository.latest_portfolio_price(position.symbol)
-        if portfolio_price is not None:
-            market_price = portfolio_price.close_price
-        else:
-            try:
-                market_price = repository.latest_market_snapshot(position.symbol).close_price
-            except LookupError:
-                pass
-        market_value = position.quantity * market_price
-        cost_value = position.quantity * position.average_cost
-        return_pct = ((market_value - cost_value) / cost_value) if cost_value else None
+    for exposure in exposures:
+        position = exposure.position
         rows.append(
             {
                 "symbol": position.symbol,
                 "account": position.account,
+                "sector": exposure.sector,
+                "theme": exposure.theme,
                 "quantity": position.quantity,
                 "average_cost": position.average_cost,
-                "market_price": market_price,
-                "market_value": market_value,
-                "return_pct": return_pct,
+                "market_price": exposure.market_price,
+                "market_value": exposure.market_value,
+                "return_pct": exposure.return_pct,
             }
         )
     return rows
@@ -1583,6 +1610,8 @@ def render_report(report: AdviceReport) -> str:
             <li>Gewicht positie: {html.escape(format_percent(fit.position_weight))}</li>
             <li>Richtmaximum: {html.escape(format_percent(fit.max_weight))}</li>
             <li>Ruimte tot richtmaximum: {html.escape(format_eur(fit.room_to_max))}</li>
+            <li>Sector {html.escape(fit.sector)}: {html.escape(format_percent(fit.sector_weight))} van effecten</li>
+            <li>Thema {html.escape(fit.theme)}: {html.escape(format_percent(fit.theme_weight))} van effecten</li>
           </ul>
           <ul class="assumption-list">{notes}</ul>
         </section>"""

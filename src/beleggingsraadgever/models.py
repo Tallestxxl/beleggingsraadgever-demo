@@ -66,6 +66,13 @@ class PortfolioPrice:
 
 
 @dataclass(frozen=True)
+class PortfolioClassification:
+    symbol: str
+    sector: str
+    theme: str
+
+
+@dataclass(frozen=True)
 class InvestorProfile:
     age: Optional[int] = None
     annual_income: Optional[float] = None
@@ -91,6 +98,12 @@ class PortfolioFit:
     max_weight: float
     room_to_max: float
     total_wealth: float
+    sector: str = "Onbekend"
+    sector_value: float = 0.0
+    sector_weight: float = 0.0
+    theme: str = "Onbekend"
+    theme_value: float = 0.0
+    theme_weight: float = 0.0
     notes: List[str] = field(default_factory=list)
 
 

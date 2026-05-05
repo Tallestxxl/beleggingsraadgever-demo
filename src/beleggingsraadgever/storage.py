@@ -17,6 +17,7 @@ from .models import (
     MacroObservation,
     MarketSnapshot,
     PortfolioAsset,
+    PortfolioClassification,
     PortfolioPrice,
     PortfolioPosition,
     Principle,
@@ -153,6 +154,13 @@ CREATE TABLE IF NOT EXISTS portfolio_prices (
   source TEXT NOT NULL DEFAULT 'portfolio_csv',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(symbol, as_of, source)
+);
+
+CREATE TABLE IF NOT EXISTS portfolio_classifications (
+  symbol TEXT PRIMARY KEY,
+  sector TEXT NOT NULL,
+  theme TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS advice_runs (
@@ -568,6 +576,48 @@ class SQLiteRepository:
                 """,
                 (price.symbol.upper(), price.as_of, price.close_price, price.currency, price.source),
             )
+
+    def upsert_portfolio_classification(self, classification: PortfolioClassification) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO portfolio_classifications (symbol, sector, theme)
+                VALUES (?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                  sector=excluded.sector,
+                  theme=excluded.theme,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (classification.symbol.upper(), classification.sector, classification.theme),
+            )
+
+    def portfolio_classification(self, symbol: str) -> Optional[PortfolioClassification]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT symbol, sector, theme
+                FROM portfolio_classifications
+                WHERE symbol = ?
+                """,
+                (symbol.upper(),),
+            ).fetchone()
+        if row is None:
+            return None
+        return PortfolioClassification(symbol=row["symbol"], sector=row["sector"], theme=row["theme"])
+
+    def portfolio_classifications(self) -> List[PortfolioClassification]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT symbol, sector, theme
+                FROM portfolio_classifications
+                ORDER BY symbol
+                """
+            ).fetchall()
+        return [
+            PortfolioClassification(symbol=row["symbol"], sector=row["sector"], theme=row["theme"])
+            for row in rows
+        ]
 
     def latest_portfolio_price(self, symbol: str) -> Optional[PortfolioPrice]:
         with self.connect() as conn:

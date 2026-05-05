@@ -7,7 +7,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from beleggingsraadgever.advisor import Advisor
-from beleggingsraadgever.models import InvestorProfile, PortfolioAsset, PortfolioPosition
+from beleggingsraadgever.models import (
+    FinancialSnapshot,
+    InvestorProfile,
+    MarketSnapshot,
+    PortfolioClassification,
+    PortfolioPosition,
+    PortfolioPrice,
+    PortfolioAsset,
+)
 from beleggingsraadgever.sample_data import seed_demo
 from beleggingsraadgever.storage import SQLiteRepository
 
@@ -50,6 +58,46 @@ class AdvisorTests(unittest.TestCase):
             self.assertIsNotNone(report.portfolio_fit)
             self.assertIn("Portefeuillefit", markdown)
             self.assertGreater(report.portfolio_fit.total_wealth, 0)
+
+    def test_portfolio_fit_warns_for_semiconductor_concentration_on_asmi(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.save_investor_profile(
+                InvestorProfile(age=52, annual_income=90000, horizon_years=12, cash_buffer=25000)
+            )
+            for symbol, value in [("ASML", 60000), ("BESI", 50000), ("SHELL", 40000)]:
+                repo.upsert_portfolio_position(
+                    PortfolioPosition(
+                        symbol=symbol,
+                        quantity=1,
+                        average_cost=value,
+                        currency="EUR",
+                        account="Test",
+                        as_of="2026-05-05",
+                    )
+                )
+                repo.upsert_portfolio_price(
+                    PortfolioPrice(symbol=symbol, as_of="2026-05-05", close_price=value, currency="EUR")
+                )
+            repo.upsert_portfolio_classification(
+                PortfolioClassification(symbol="ASML", sector="Semiconductors", theme="Semiconductor equipment")
+            )
+            repo.upsert_portfolio_classification(
+                PortfolioClassification(symbol="BESI", sector="Semiconductors", theme="Semiconductor equipment")
+            )
+
+            report = Advisor(repo).analyze_snapshots(
+                "ASMI",
+                FinancialSnapshot(symbol="ASMI", period_end="2025-12-31", period_type="TTM", revenue=1_000_000_000),
+                MarketSnapshot(symbol="ASMI", as_of="2026-05-05", close_price=500, currency="EUR"),
+            )
+
+            self.assertIsNotNone(report.portfolio_fit)
+            self.assertEqual(report.portfolio_fit.sector, "Semiconductors")
+            self.assertGreater(report.portfolio_fit.sector_weight, 0.20)
+            self.assertIn("Sectorconcentratie", " ".join(report.portfolio_fit.notes))
+            self.assertIn("Semiconductors", report.portfolio_fit.summary)
 
 
 if __name__ == "__main__":

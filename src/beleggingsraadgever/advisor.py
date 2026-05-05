@@ -6,7 +6,12 @@ from typing import List, Optional
 
 from .indicators import build_score, conviction_from_score, verdict_from_score
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeHit, MarketSnapshot, PortfolioFit
+from .portfolio import effective_classification, exposure_buckets, portfolio_position_exposures
 from .storage import SQLiteRepository
+
+
+SECTOR_WARNING_THRESHOLD = 0.20
+THEME_WARNING_THRESHOLD = 0.25
 
 
 class Advisor:
@@ -132,6 +137,8 @@ class Advisor:
                     f"- Gewicht positie: {fit.position_weight:.1%}",
                     f"- Richtmaximum: {fit.max_weight:.1%}",
                     f"- Ruimte tot richtmaximum: EUR {fit.room_to_max:,.0f}",
+                    f"- Sector {fit.sector}: {fit.sector_weight:.1%} van effecten",
+                    f"- Thema {fit.theme}: {fit.theme_weight:.1%} van effecten",
                 ]
             )
             lines.extend(f"- {note}" for note in fit.notes)
@@ -161,30 +168,31 @@ class Advisor:
 
     def _build_portfolio_fit(self, symbol: str, market: MarketSnapshot, score) -> PortfolioFit:
         profile = self.repository.investor_profile()
-        positions = self.repository.latest_portfolio_positions()
+        exposures = portfolio_position_exposures(self.repository)
         assets = self.repository.portfolio_assets()
         asset_value = sum(asset.value for asset in assets)
 
         position_values: dict[str, float] = {}
-        for position in positions:
-            value = position.quantity * position.average_cost
-            portfolio_price = self.repository.latest_portfolio_price(position.symbol)
-            if portfolio_price is not None:
-                value = position.quantity * portfolio_price.close_price
-            else:
-                try:
-                    value = position.quantity * self.repository.latest_market_snapshot(position.symbol).close_price
-                except LookupError:
-                    pass
-            position_values[position.symbol.upper()] = position_values.get(position.symbol.upper(), 0.0) + value
+        for exposure in exposures:
+            symbol_key = exposure.position.symbol.upper()
+            position_values[symbol_key] = position_values.get(symbol_key, 0.0) + exposure.market_value
 
         target_value = position_values.get(symbol.upper(), 0.0)
-        if target_value == 0 and any(position.symbol.upper() == symbol.upper() for position in positions):
+        if target_value == 0 and any(exposure.position.symbol.upper() == symbol.upper() for exposure in exposures):
             target_value = market.close_price * sum(
-                position.quantity for position in positions if position.symbol.upper() == symbol.upper()
+                exposure.position.quantity for exposure in exposures if exposure.position.symbol.upper() == symbol.upper()
             )
 
         total_wealth = asset_value + sum(position_values.values())
+        classification = effective_classification(self.repository, symbol)
+        sector_buckets = exposure_buckets(exposures, by="sector", total_wealth=total_wealth)
+        theme_buckets = exposure_buckets(exposures, by="theme", total_wealth=total_wealth)
+        sector_bucket = next((bucket for bucket in sector_buckets if bucket.label == classification.sector), None)
+        theme_bucket = next((bucket for bucket in theme_buckets if bucket.label == classification.theme), None)
+        sector_value = sector_bucket.value if sector_bucket else 0.0
+        sector_weight = sector_bucket.securities_weight if sector_bucket else 0.0
+        theme_value = theme_bucket.value if theme_bucket else 0.0
+        theme_weight = theme_bucket.securities_weight if theme_bucket else 0.0
         risk_profile = profile.risk_profile if profile else "gebalanceerd"
         max_weight = {"defensief": 0.03, "gebalanceerd": 0.05, "offensief": 0.07}.get(risk_profile, 0.05)
         position_weight = target_value / total_wealth if total_wealth else 0.0
@@ -195,7 +203,7 @@ class Advisor:
             notes.append("Profiel ontbreekt nog; vul leeftijd, inkomen, horizon en risicoprofiel aan voor scherpere limieten.")
         elif profile.horizon_years is not None and profile.horizon_years < 5:
             notes.append("Beleggingshorizon is korter dan 5 jaar; wees voorzichtig met cyclische of volatiele posities.")
-        if not positions and not assets:
+        if not exposures and not assets:
             notes.append("Portefeuille ontbreekt nog; voer posities en overige vermogenscategorieën in.")
         if target_value == 0:
             notes.append(f"Geen bestaande positie in {symbol}; dit aandeel zou een nieuwe positie zijn.")
@@ -207,9 +215,17 @@ class Advisor:
             notes.append("De aandelenscore is lager dan 60; behandel eventuele koopruimte als onderzoeksruimte, niet als koopsignaal.")
         if score.flags:
             notes.append("Risicosignalen in de analyse verlagen de praktische overtuiging.")
+        if classification.sector != "Onbekend" and sector_weight >= SECTOR_WARNING_THRESHOLD:
+            notes.append(
+                f"Sectorconcentratie: {classification.sector} is al {sector_weight:.1%} van de effectenportefeuille."
+            )
+        if classification.theme != "Onbekend" and theme_weight >= THEME_WARNING_THRESHOLD:
+            notes.append(f"Themaconcentratie: {classification.theme} is al {theme_weight:.1%} van de effectenportefeuille.")
 
         if not total_wealth:
             summary = "Portefeuillefit is nog niet bepaalbaar omdat profiel en portefeuille ontbreken."
+        elif classification.sector != "Onbekend" and sector_weight >= SECTOR_WARNING_THRESHOLD:
+            summary = f"{symbol} vraagt voorzichtigheid door bestaande {classification.sector}-concentratie."
         elif position_weight > max_weight:
             summary = f"{symbol} is al groter dan het richtmaximum voor een {risk_profile} profiel."
         elif target_value == 0:
@@ -224,6 +240,12 @@ class Advisor:
             max_weight=max_weight,
             room_to_max=room_to_max,
             total_wealth=total_wealth,
+            sector=classification.sector,
+            sector_value=sector_value,
+            sector_weight=sector_weight,
+            theme=classification.theme,
+            theme_value=theme_value,
+            theme_weight=theme_weight,
             notes=notes,
         )
 

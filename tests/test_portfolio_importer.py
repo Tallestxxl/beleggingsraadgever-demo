@@ -37,11 +37,13 @@ Aandelen,"","","","","","","","",""
             self.assertEqual(positions[0].quantity, 334)
             self.assertEqual(positions[0].average_cost, 35.24)
             self.assertEqual(repo.latest_portfolio_price("APERAM").close_price, 46.88)
+            self.assertEqual(repo.portfolio_classification("BESI").sector, "Semiconductors")
             with self.assertRaises(LookupError):
                 repo.latest_market_snapshot("APERAM")
 
     def test_normalize_broker_name_uses_known_aliases_and_fallback(self) -> None:
         self.assertEqual(normalize_broker_name("ASML  HOLDING"), "ASML")
+        self.assertEqual(normalize_broker_name("ASMI"), "ASMI")
         self.assertEqual(normalize_broker_name("BAM GROEP /KON/"), "BAMNB")
         self.assertEqual(normalize_broker_name("Onbekend Fonds Naam"), "ONBEKEND_FONDS_NAAM")
 

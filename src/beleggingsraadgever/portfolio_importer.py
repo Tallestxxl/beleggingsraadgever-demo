@@ -9,7 +9,8 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
-from .models import PortfolioPosition, PortfolioPrice
+from .classification import classify_symbol
+from .models import PortfolioClassification, PortfolioPosition, PortfolioPrice
 from .storage import SQLiteRepository
 
 
@@ -18,6 +19,7 @@ BROKER_NAME_ALIASES = {
     "AKZO NOBEL": "AKZA",
     "ALFEN": "ALFEN",
     "APERAM": "APERAM",
+    "ASMI": "ASMI",
     "ASML HOLDING": "ASML",
     "AVANTIUM": "AVTX",
     "BAM GROEP": "BAMNB",
@@ -99,6 +101,10 @@ def import_portfolio_csv(repository: SQLiteRepository, path: Path) -> PortfolioC
                 account=account,
                 as_of=as_of,
             )
+        )
+        classification = classify_symbol(symbol)
+        repository.upsert_portfolio_classification(
+            PortfolioClassification(symbol=symbol, sector=classification.sector, theme=classification.theme)
         )
         imported_positions += 1
 

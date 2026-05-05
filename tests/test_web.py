@@ -287,6 +287,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("Profiel & portefeuille", html)
             self.assertIn("CSV-import", html)
             self.assertIn("Effectenportefeuille", html)
+            self.assertIn("Sectorverdeling effecten", html)
             self.assertIn("DEMO", html)
             self.assertIn("EUR 550.000", html)
 
