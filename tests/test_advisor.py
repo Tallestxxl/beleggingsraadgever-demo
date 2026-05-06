@@ -152,6 +152,52 @@ class AdvisorTests(unittest.TestCase):
             self.assertNotIn("BAM Brookfield snapshot", [hit.title for hit in report.evidence])
             self.assertIn("Algemeen bouwprincipe", [hit.title for hit in report.evidence])
 
+    def test_symbol_tagged_case_note_must_match_analyzed_symbol(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.add_document(
+                title="APERAM dividendcasus",
+                source_type="beleggers_belangen",
+                raw_text=(
+                    "Zorg dat er voldoende free cashflow is om het dividend elke drie maanden te kunnen betalen. "
+                    "Waardering, marge, vrije kasstroom, schuld, dividend, buybacks, risico en kwaliteit."
+                ),
+                tags=["APERAM", "casusnotitie"],
+            )
+            repo.add_document(
+                title="Algemeen dividendprincipe",
+                source_type="beleggers_belangen",
+                raw_text=(
+                    "Dividend moet worden ondersteund door vrije kasstroom, balansruimte en lage schuld. "
+                    "Waardering, marge, vrije kasstroom, schuld, dividend, buybacks, risico en kwaliteit."
+                ),
+                tags=["dividend", "vrije kasstroom"],
+            )
+
+            report = Advisor(repo).analyze_snapshots(
+                "BESI",
+                FinancialSnapshot(
+                    symbol="BESI",
+                    period_end="2025-12-31",
+                    period_type="TTM",
+                    revenue=1_000_000_000,
+                    free_cash_flow=180_000_000,
+                    operating_margin=0.25,
+                ),
+                MarketSnapshot(
+                    symbol="BESI",
+                    as_of="2026-05-06",
+                    close_price=130,
+                    currency="EUR",
+                    dividend_yield=0.045,
+                ),
+            )
+
+            evidence_titles = [hit.title for hit in report.evidence]
+            self.assertNotIn("APERAM dividendcasus", evidence_titles)
+            self.assertIn("Algemeen dividendprincipe", evidence_titles)
+
     def test_peer_analysis_compares_against_available_peer_snapshots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")

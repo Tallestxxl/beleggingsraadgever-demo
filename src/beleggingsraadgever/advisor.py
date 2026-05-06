@@ -20,6 +20,9 @@ SYMBOL_SCOPED_KNOWLEDGE_TYPES = {
     "public_data_snapshot",
     "public_market_data",
 }
+SYMBOL_SCOPED_KNOWLEDGE_TAGS = {
+    "CASUSNOTITIE",
+}
 
 TRANSACTION_LABELS = {
     "niet_kopen": "Niet kopen",
@@ -414,12 +417,20 @@ class Advisor:
             query_parts.append("sterke vrije kasstroom kapitaalallocatie")
 
         accepted_symbols = self._accepted_evidence_symbols(symbol)
-        hits = self.repository.search_knowledge(" ".join(query_parts), limit=20)
-        return [
-            hit
-            for hit in hits
-            if _knowledge_hit_matches_symbol(hit, accepted_symbols)
-        ][:5]
+        hits = self.repository.search_knowledge(" ".join(query_parts), limit=50)
+        evidence: list[KnowledgeHit] = []
+        seen_sources: set[tuple[str, str]] = set()
+        for hit in hits:
+            if not _knowledge_hit_matches_symbol(hit, accepted_symbols):
+                continue
+            source_key = (hit.title, hit.source_type)
+            if source_key in seen_sources:
+                continue
+            seen_sources.add(source_key)
+            evidence.append(hit)
+            if len(evidence) >= 5:
+                break
+        return evidence
 
     def _accepted_evidence_symbols(self, symbol: str) -> set[str]:
         accepted = {normalize_symbol(symbol)}
@@ -499,14 +510,24 @@ def _classification_symbol(
 
 
 def _knowledge_hit_matches_symbol(hit: KnowledgeHit, accepted_symbols: set[str]) -> bool:
-    if hit.source_type not in SYMBOL_SCOPED_KNOWLEDGE_TYPES:
+    scope_symbol = _knowledge_hit_scope_symbol(hit)
+    if scope_symbol is None:
         return True
+    return scope_symbol in accepted_symbols
+
+
+def _knowledge_hit_scope_symbol(hit: KnowledgeHit) -> Optional[str]:
     if not hit.chunk.tags:
-        return True
+        return None
     primary_tag = normalize_symbol(str(hit.chunk.tags[0]))
     if not primary_tag:
-        return True
-    return primary_tag in accepted_symbols
+        return None
+    normalized_tags = {normalize_symbol(str(tag)) for tag in hit.chunk.tags}
+    if hit.source_type in SYMBOL_SCOPED_KNOWLEDGE_TYPES:
+        return primary_tag
+    if normalized_tags & SYMBOL_SCOPED_KNOWLEDGE_TAGS:
+        return primary_tag
+    return None
 
 
 def _transaction_rationale(
