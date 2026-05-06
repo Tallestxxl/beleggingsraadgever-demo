@@ -72,10 +72,27 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(data["financial_snapshot"]["revenue"], 1_000_000_000)
             self.assertEqual(data["classification"]["sector"], "Industrials")
             self.assertEqual(data["classification"]["theme"], "Offshore services")
+            self.assertEqual(data["company_profile"]["industry"], "Engineering & Construction")
+            self.assertIn("classification", result.updated_fields)
+            self.assertTrue(any(source["field_name"] == "classification" for source in data["data_sources"]))
             self.assertTrue(any(source["field_name"] == "close_price" for source in data["data_sources"]))
             self.assertTrue(any(source["field_name"] == "revenue" for source in data["data_sources"]))
             self.assertTrue(any(doc["title"] == "FUGRO eerste snapshot" for doc in data["documents"]))
             self.assertTrue(any(doc["title"] == "FUGRO automatisch opgehaalde marktdata" for doc in data["documents"]))
+
+    def test_collect_snapshot_data_uses_provider_profile_for_medtech_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "philips.json"
+            result = collect_snapshot_data("PHILIPS", path=path, fetch_text=_fake_philips_lookup_fetch)
+            data = load_company_snapshot(path)
+
+            self.assertIn("company_profile", result.updated_fields)
+            self.assertIn("classification", result.updated_fields)
+            self.assertEqual(data["company_profile"]["sector"], "Healthcare")
+            self.assertEqual(data["company_profile"]["industry"], "Medical Devices")
+            self.assertEqual(data["classification"]["sector"], "Healthcare")
+            self.assertEqual(data["classification"]["theme"], "Medical technology")
+            self.assertEqual(data["classification"]["source"], "provider_profile")
 
 
 def _fake_stockanalysis_fetch(url: str) -> str:
@@ -129,6 +146,25 @@ def _fake_lam_research_lookup_fetch(url: str) -> str:
     return "Page Not Found - 404"
 
 
+def _fake_philips_lookup_fetch(url: str) -> str:
+    if "stocks/philips" in url or "quote/ams/PHILIPS" in url:
+        return "Page Not Found - 404"
+    if "symbol-lookup" in url:
+        return """
+        <script>
+          data:[{type:"data",data:{query:"PHILIPS",count:1,
+          results:[{s:"@ams/PHIA",n:"Koninklijke Philips N.V.",t:"Stock",p:24.10,m:22000000000}]}}]
+        </script>
+        """
+    if "financials" in url and "quote/ams/PHIA" in url:
+        return _fake_stockanalysis_financials_html()
+    if "statistics" in url and "quote/ams/PHIA" in url:
+        return _fake_stockanalysis_statistics_html()
+    if "stockanalysis.com/quote/ams/PHIA/" in url:
+        return _fake_philips_overview_html()
+    return "Page Not Found - 404"
+
+
 def _fake_stooq_fetch(url: str) -> str:
     if "stockanalysis.com" in url:
         return "Page Not Found - 404"
@@ -149,13 +185,29 @@ def _fake_stockanalysis_overview_html() -> str:
     return f"""
     <script>
       data: [
-        {{type:"data",data:{{info:{{quote:{{p:20.1,cl:20.0,td:"2026-04-30"}},curr:{{price:"EUR",main:"EUR"}}}}}}}},
+        {{type:"data",data:{{info:{{quote:{{p:20.1,cl:20.0,td:"2026-04-30"}},curr:{{price:"EUR",main:"EUR"}},nameFull:"Fugro N.V."}}}}}},
         {{type:"data",data:{{description:"Fugro levert geo-data diensten voor energie, infrastructuur en water.",
+          sector:"Industrials", industry:"Engineering & Construction",
           chart:{{expiration:0,data:[{_fake_chart_points()}]}},
           changes:{{price1y:10.0}}}}}}
       ]
     </script>
     <script type="application/ld+json">{{"@type":"Corporation","name":"Fugro","legalName":"Fugro N.V.","tickerSymbol":"AMS:FUR"}}</script>
+    """
+
+
+def _fake_philips_overview_html() -> str:
+    return f"""
+    <script>
+      data: [
+        {{type:"data",data:{{info:{{quote:{{p:24.2,cl:24.1,td:"2026-04-30"}},curr:{{price:"EUR",main:"EUR"}},nameFull:"Koninklijke Philips N.V."}}}}}},
+        {{type:"data",data:{{description:"Koninklijke Philips N.V. is a health technology company focused on diagnostic imaging, image-guided therapy and patient monitoring.",
+          sector:"Healthcare", industry:"Medical Devices",
+          chart:{{expiration:0,data:[{_fake_chart_points()}]}},
+          changes:{{price1y:10.0}}}}}}
+      ]
+    </script>
+    <script type="application/ld+json">{{"@type":"Corporation","name":"Koninklijke Philips N.V.","legalName":"Koninklijke Philips N.V.","tickerSymbol":"AMS:PHIA"}}</script>
     """
 
 

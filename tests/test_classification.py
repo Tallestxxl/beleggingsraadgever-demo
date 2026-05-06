@@ -25,6 +25,20 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(classification.sector, "Semiconductors")
         self.assertEqual(classification.theme, "Semiconductor equipment")
 
+    def test_provider_sector_and_industry_classify_medtech_company(self) -> None:
+        classification = classify_company(
+            "PHILIPS",
+            company_name="Koninklijke Philips N.V.",
+            provider_sector="Healthcare",
+            provider_industry="Medical Devices",
+            description="Philips is a health technology company focused on diagnostic imaging and patient monitoring.",
+        )
+
+        self.assertEqual(classification.sector, "Healthcare")
+        self.assertEqual(classification.theme, "Medical technology")
+        self.assertGreaterEqual(classification.confidence, 0.8)
+        self.assertEqual(classification.source, "provider_profile")
+
     def test_unknown_without_description_remains_unknown(self) -> None:
         classification = classify_symbol("TOTALLYNEW")
 

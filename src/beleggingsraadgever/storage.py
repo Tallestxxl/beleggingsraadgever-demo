@@ -10,6 +10,7 @@ from typing import Iterable, List, Optional
 
 from .knowledge import HashingVectorizer, chunk_text, cosine_similarity
 from .models import (
+    CompanyProfile,
     DataSource,
     FinancialSnapshot,
     InvestorProfile,
@@ -193,6 +194,21 @@ CREATE TABLE IF NOT EXISTS portfolio_classifications (
   symbol TEXT PRIMARY KEY,
   sector TEXT NOT NULL,
   theme TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS company_profiles (
+  symbol TEXT PRIMARY KEY,
+  company_name TEXT NOT NULL DEFAULT '',
+  provider_symbol TEXT NOT NULL DEFAULT '',
+  source_name TEXT NOT NULL DEFAULT '',
+  source_url TEXT NOT NULL DEFAULT '',
+  as_of TEXT NOT NULL DEFAULT '',
+  sector TEXT NOT NULL DEFAULT '',
+  industry TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  classification_confidence REAL NOT NULL DEFAULT 0,
+  classification_source TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -834,6 +850,70 @@ class SQLiteRepository:
             PortfolioClassification(symbol=row["symbol"], sector=row["sector"], theme=row["theme"])
             for row in rows
         ]
+
+    def upsert_company_profile(self, profile: CompanyProfile) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO company_profiles (
+                  symbol, company_name, provider_symbol, source_name, source_url, as_of,
+                  sector, industry, description, classification_confidence, classification_source
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                  company_name=excluded.company_name,
+                  provider_symbol=excluded.provider_symbol,
+                  source_name=excluded.source_name,
+                  source_url=excluded.source_url,
+                  as_of=excluded.as_of,
+                  sector=excluded.sector,
+                  industry=excluded.industry,
+                  description=excluded.description,
+                  classification_confidence=excluded.classification_confidence,
+                  classification_source=excluded.classification_source,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    profile.symbol.upper(),
+                    profile.company_name,
+                    profile.provider_symbol,
+                    profile.source_name,
+                    profile.source_url,
+                    profile.as_of,
+                    profile.sector,
+                    profile.industry,
+                    profile.description,
+                    profile.classification_confidence,
+                    profile.classification_source,
+                ),
+            )
+
+    def company_profile(self, symbol: str) -> Optional[CompanyProfile]:
+        with self.connect() as conn:
+            row = conn.execute(
+                """
+                SELECT symbol, company_name, provider_symbol, source_name, source_url, as_of,
+                       sector, industry, description, classification_confidence, classification_source
+                FROM company_profiles
+                WHERE symbol = ?
+                """,
+                (symbol.upper(),),
+            ).fetchone()
+        if row is None:
+            return None
+        return CompanyProfile(
+            symbol=row["symbol"],
+            company_name=row["company_name"],
+            provider_symbol=row["provider_symbol"],
+            source_name=row["source_name"],
+            source_url=row["source_url"],
+            as_of=row["as_of"],
+            sector=row["sector"],
+            industry=row["industry"],
+            description=row["description"],
+            classification_confidence=row["classification_confidence"],
+            classification_source=row["classification_source"],
+        )
 
     def upsert_portfolio_alias(self, alias: PortfolioAlias) -> None:
         with self.connect() as conn:

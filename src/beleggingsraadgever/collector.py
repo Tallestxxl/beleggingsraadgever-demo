@@ -49,6 +49,8 @@ class MarketData:
     volatility_1y: Optional[float]
     statistics_url: Optional[str] = None
     company_name: Optional[str] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
     description: Optional[str] = None
     period_end: Optional[str] = None
     period_type: Optional[str] = None
@@ -260,13 +262,31 @@ def update_snapshot_with_market_data(path: Path, market_data: MarketData) -> Lis
     classification = classify_company(
         str(data.get("symbol", "")).upper(),
         company_name=market_data.company_name,
+        provider_sector=market_data.sector,
+        provider_industry=market_data.industry,
         description=market_data.description,
     )
+    data["company_profile"] = {
+        "company_name": market_data.company_name or "",
+        "provider": market_data.provider,
+        "provider_symbol": market_data.provider_symbol,
+        "source_url": market_data.source_url,
+        "as_of": market_data.as_of,
+        "sector": market_data.sector or "",
+        "industry": market_data.industry or "",
+        "description": market_data.description or "",
+        "classification_confidence": round(classification.confidence, 4),
+        "classification_source": classification.source,
+    }
+    updated_fields.append("company_profile")
     if classification.sector != "Onbekend" or classification.theme != "Onbekend":
         data["classification"] = {
             "sector": classification.sector,
             "theme": classification.theme,
-            "source": "public_company_description",
+            "industry": classification.industry,
+            "confidence": round(classification.confidence, 4),
+            "source": classification.source or "public_company_profile",
+            "reason": classification.reason,
             "source_url": market_data.source_url,
         }
         updated_fields.append("classification")
@@ -553,6 +573,8 @@ def _market_data_from_stockanalysis(
         statistics_url=candidate.statistics_url if statistics_html else None,
         company_name=_extract_string_from_block(_extract_simple_object(overview_html, "info"), "nameFull")
         or _extract_json_ld_name(overview_html),
+        sector=_extract_string_from_key(overview_html, "sector"),
+        industry=_extract_string_from_key(overview_html, "industry"),
         description=_extract_string_from_key(overview_html, "description"),
         period_end=period_end,
         period_type="TTM" if revenue is not None else None,
@@ -598,6 +620,20 @@ def _market_data_sources(market_data: MarketData) -> List[Dict[str, str]]:
             "note": "Automatisch opgehaald als end-of-day koerspunt.",
         }
     ]
+    if market_data.sector or market_data.industry or market_data.description:
+        sources.append(
+            {
+                "field_name": "classification",
+                "value_label": "Bedrijfsprofiel"
+                + (f": sector {market_data.sector}" if market_data.sector else "")
+                + (f", industrie {market_data.industry}" if market_data.industry else ""),
+                "source_name": f"{market_data.provider} bedrijfsprofiel",
+                "source_url": market_data.source_url,
+                "source_date": market_data.as_of,
+                "source_quality": "profiel",
+                "note": "Gebruikt als bron voor sector/thema-classificatie; thema blijft een lokale beleggingslens.",
+            }
+        )
     if market_data.momentum_12m is not None:
         sources.append(
             {

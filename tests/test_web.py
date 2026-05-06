@@ -192,6 +192,18 @@ class WebTests(unittest.TestCase):
                             "close_price": 5,
                             "currency": "GBP",
                         },
+                        "company_profile": {
+                            "company_name": "BP p.l.c.",
+                            "provider": "StockAnalysis",
+                            "provider_symbol": "BP",
+                            "source_url": "https://stockanalysis.com/stocks/bp/",
+                            "as_of": "2026-05-05",
+                            "sector": "Energy",
+                            "industry": "Oil & Gas Integrated",
+                            "description": "BP is an integrated energy company.",
+                            "classification_confidence": 0.88,
+                            "classification_source": "provider_profile",
+                        },
                         "documents": [
                             {
                                 "title": "BP automatisch opgehaalde marktdata",
@@ -219,6 +231,9 @@ class WebTests(unittest.TestCase):
             self.assertEqual(stored.theme, "Oil and gas")
             self.assertEqual(report.portfolio_fit.sector, "Energy")
             self.assertEqual(report.portfolio_fit.theme, "Oil and gas")
+            profile = repo.company_profile("BP")
+            self.assertIsNotNone(profile)
+            self.assertEqual(profile.industry, "Oil & Gas Integrated")
 
     def test_case_note_replaces_todo_principle_and_makes_collected_draft_importable(self) -> None:
         import tempfile

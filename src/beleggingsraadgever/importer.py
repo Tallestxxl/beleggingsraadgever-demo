@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 from .classification import classify_company
 from .models import DataSource, FinancialSnapshot, MarketSnapshot, Principle
-from .models import PortfolioClassification
+from .models import CompanyProfile, PortfolioClassification
 from .peer_discovery import refresh_peer_candidates
 from .storage import SQLiteRepository
 
@@ -83,6 +83,7 @@ def import_company_snapshot(repository: SQLiteRepository, path: Path) -> str:
     _import_data_sources(repository, symbol, data.get("data_sources", []))
     document_ids = _import_documents(repository, data.get("documents", []))
     _import_principles(repository, document_ids, data.get("principles", []))
+    _import_company_profile(repository, symbol, data)
     _import_classification(repository, symbol, data)
     refresh_peer_candidates(repository, symbol)
     repository.record_snapshot_import(
@@ -278,17 +279,48 @@ def _import_principles(
 
 def _import_classification(repository: SQLiteRepository, symbol: str, data: Dict[str, Any]) -> None:
     classification_data = data.get("classification") if isinstance(data.get("classification"), dict) else {}
+    profile_data = data.get("company_profile") if isinstance(data.get("company_profile"), dict) else {}
     sector = classification_data.get("sector")
     theme = classification_data.get("theme")
     if _classification_value_missing(sector) or _classification_value_missing(theme):
         description = _snapshot_description_text(data)
-        inferred = classify_company(symbol, description=description)
+        inferred = classify_company(
+            symbol,
+            company_name=profile_data.get("company_name"),
+            provider_sector=profile_data.get("sector"),
+            provider_industry=profile_data.get("industry"),
+            description=description or profile_data.get("description"),
+        )
         sector = inferred.sector if _classification_value_missing(sector) else sector
         theme = inferred.theme if _classification_value_missing(theme) else theme
     if _classification_value_missing(sector) and _classification_value_missing(theme):
         return
     repository.upsert_portfolio_classification(
         PortfolioClassification(symbol=symbol, sector=str(sector), theme=str(theme))
+    )
+
+
+def _import_company_profile(repository: SQLiteRepository, symbol: str, data: Dict[str, Any]) -> None:
+    profile = data.get("company_profile") if isinstance(data.get("company_profile"), dict) else {}
+    classification = data.get("classification") if isinstance(data.get("classification"), dict) else {}
+    if not profile and not classification:
+        return
+    repository.upsert_company_profile(
+        CompanyProfile(
+            symbol=symbol,
+            company_name=str(profile.get("company_name") or ""),
+            provider_symbol=str(profile.get("provider_symbol") or ""),
+            source_name=str(profile.get("provider") or classification.get("source") or ""),
+            source_url=str(profile.get("source_url") or classification.get("source_url") or ""),
+            as_of=str(profile.get("as_of") or ""),
+            sector=str(profile.get("sector") or classification.get("sector") or ""),
+            industry=str(profile.get("industry") or classification.get("industry") or ""),
+            description=str(profile.get("description") or ""),
+            classification_confidence=float(
+                profile.get("classification_confidence") or classification.get("confidence") or 0.0
+            ),
+            classification_source=str(profile.get("classification_source") or classification.get("source") or ""),
+        )
     )
 
 

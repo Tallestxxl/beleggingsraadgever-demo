@@ -25,7 +25,7 @@ from .importer import (
 )
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
 from .classification import classify_company, classify_symbol
-from .models import InvestorProfile, PortfolioAsset, PortfolioClassification, PortfolioPosition
+from .models import CompanyProfile, InvestorProfile, PortfolioAsset, PortfolioClassification, PortfolioPosition
 from .models import PortfolioPerformanceSummary, PortfolioPositionPerformance
 from .peer_discovery import refresh_peer_candidates, refresh_peer_candidates_for_portfolio
 from .portfolio import exposure_buckets, portfolio_position_exposures
@@ -1464,22 +1464,53 @@ def local_peer_snapshots() -> dict[str, tuple[FinancialSnapshot, MarketSnapshot]
 
 def _store_snapshot_classification(repository: SQLiteRepository, symbol: str, snapshot: dict) -> None:
     classification_data = snapshot.get("classification") if isinstance(snapshot.get("classification"), dict) else {}
+    profile_data = snapshot.get("company_profile") if isinstance(snapshot.get("company_profile"), dict) else {}
     sector = classification_data.get("sector")
     theme = classification_data.get("theme")
+    description = ""
+    industry = str(classification_data.get("industry") or profile_data.get("industry") or "")
     if _classification_value_missing(sector) or _classification_value_missing(theme):
         description = " ".join(
             str(document.get("raw_text") or "")
             for document in snapshot.get("documents", [])
             if isinstance(document, dict)
         )
-        classification = classify_company(symbol, description=description)
+        classification = classify_company(
+            symbol,
+            company_name=profile_data.get("company_name"),
+            provider_sector=profile_data.get("sector"),
+            provider_industry=profile_data.get("industry"),
+            description=description or profile_data.get("description"),
+        )
         sector = classification.sector if _classification_value_missing(sector) else sector
         theme = classification.theme if _classification_value_missing(theme) else theme
+        confidence = classification.confidence
+        source = classification.source
+        industry = classification.industry or industry
+    else:
+        confidence = float(classification_data.get("confidence") or profile_data.get("classification_confidence") or 0.0)
+        source = str(classification_data.get("source") or profile_data.get("classification_source") or "")
     if _classification_value_missing(sector) and _classification_value_missing(theme):
         return
     repository.upsert_portfolio_classification(
         PortfolioClassification(symbol=symbol, sector=str(sector), theme=str(theme))
     )
+    if profile_data or classification_data or description:
+        repository.upsert_company_profile(
+            CompanyProfile(
+                symbol=symbol,
+                company_name=str(profile_data.get("company_name") or ""),
+                provider_symbol=str(profile_data.get("provider_symbol") or ""),
+                source_name=str(profile_data.get("provider") or source),
+                source_url=str(profile_data.get("source_url") or classification_data.get("source_url") or ""),
+                as_of=str(profile_data.get("as_of") or ""),
+                sector=str(profile_data.get("sector") or sector),
+                industry=industry,
+                description=str(profile_data.get("description") or description),
+                classification_confidence=confidence,
+                classification_source=source,
+            )
+        )
     refresh_peer_candidates(repository, symbol)
 
 

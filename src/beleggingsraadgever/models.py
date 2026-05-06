@@ -99,6 +99,21 @@ class PortfolioClassification:
 
 
 @dataclass(frozen=True)
+class CompanyProfile:
+    symbol: str
+    company_name: str = ""
+    provider_symbol: str = ""
+    source_name: str = ""
+    source_url: str = ""
+    as_of: str = ""
+    sector: str = ""
+    industry: str = ""
+    description: str = ""
+    classification_confidence: float = 0.0
+    classification_source: str = ""
+
+
+@dataclass(frozen=True)
 class PortfolioAlias:
     portfolio_symbol: str
     alias_key: str

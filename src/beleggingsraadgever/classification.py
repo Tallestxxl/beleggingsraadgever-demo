@@ -10,6 +10,10 @@ class SymbolClassification:
     symbol: str
     sector: str
     theme: str
+    industry: str = ""
+    confidence: float = 0.0
+    source: str = ""
+    reason: str = ""
 
 
 CLASSIFICATION_BY_SYMBOL = {
@@ -110,8 +114,23 @@ KEYWORD_CLASSIFICATIONS = [
         ("Technology", "Software"),
     ),
     (
-        ("pharmaceutical", "biotechnology", "medical devices", "healthcare", "diagnostics"),
-        ("Healthcare", "Healthcare"),
+        (
+            "medical technology",
+            "medical devices",
+            "health technology",
+            "healthcare technology",
+            "diagnostic imaging",
+            "diagnostics",
+            "image-guided therapy",
+            "patient monitoring",
+            "health care equipment",
+            "healthcare equipment",
+        ),
+        ("Healthcare", "Medical technology"),
+    ),
+    (
+        ("pharmaceutical", "biotechnology", "biopharma", "drug discovery", "therapeutics"),
+        ("Healthcare", "Pharmaceuticals and biotech"),
     ),
     (
         ("retail", "e-commerce", "apparel", "luxury goods", "restaurants"),
@@ -136,16 +155,93 @@ KEYWORD_CLASSIFICATIONS = [
 ]
 
 
+PROVIDER_SECTOR_MAP = {
+    "basic materials": "Materials",
+    "communication services": "Communication Services",
+    "consumer cyclical": "Consumer Discretionary",
+    "consumer defensive": "Consumer Staples",
+    "consumer discretionary": "Consumer Discretionary",
+    "consumer staples": "Consumer Staples",
+    "energy": "Energy",
+    "financial services": "Financials",
+    "financials": "Financials",
+    "healthcare": "Healthcare",
+    "health care": "Healthcare",
+    "industrials": "Industrials",
+    "real estate": "Real Estate",
+    "technology": "Technology",
+    "utilities": "Utilities",
+}
+
+
+INDUSTRY_CLASSIFICATIONS = [
+    (
+        (
+            "semiconductor",
+            "semiconductor equipment",
+            "semiconductor materials",
+            "electronic components",
+        ),
+        ("Semiconductors", "Semiconductor equipment"),
+    ),
+    (
+        (
+            "medical devices",
+            "medical instruments",
+            "medical technology",
+            "diagnostics",
+            "diagnostic imaging",
+            "health information services",
+            "health care equipment",
+            "healthcare equipment",
+        ),
+        ("Healthcare", "Medical technology"),
+    ),
+    (
+        ("biotechnology", "drug manufacturers", "pharmaceuticals", "pharmaceutical"),
+        ("Healthcare", "Pharmaceuticals and biotech"),
+    ),
+    (
+        ("oil", "gas", "integrated oil", "energy"),
+        ("Energy", "Oil and gas"),
+    ),
+    (
+        ("steel", "metals", "aluminum", "copper"),
+        ("Materials", "Steel and metals"),
+    ),
+    (
+        ("engineering", "construction", "infrastructure"),
+        ("Industrials", "Construction"),
+    ),
+    (
+        ("software", "application software", "infrastructure software", "cloud"),
+        ("Technology", "Software"),
+    ),
+    (
+        ("telecom", "telecommunication"),
+        ("Communication Services", "Telecom"),
+    ),
+    (
+        ("staffing", "employment services"),
+        ("Industrials", "Staffing"),
+    ),
+]
+
+
 def classify_symbol(symbol: str) -> SymbolClassification:
     normalized = symbol.strip().upper()
     sector, theme = CLASSIFICATION_BY_SYMBOL.get(normalized, ("Onbekend", "Onbekend"))
-    return SymbolClassification(symbol=normalized, sector=sector, theme=theme)
+    confidence = 0.98 if sector != "Onbekend" or theme != "Onbekend" else 0.0
+    source = "known_symbol" if confidence else ""
+    return SymbolClassification(symbol=normalized, sector=sector, theme=theme, confidence=confidence, source=source)
 
 
 def classify_company(
     symbol: str,
     *,
     company_name: str | None = None,
+    provider_sector: str | None = None,
+    provider_industry: str | None = None,
     description: str | None = None,
 ) -> SymbolClassification:
     normalized = symbol.strip().upper()
@@ -153,8 +249,53 @@ def classify_company(
     if known.sector != "Onbekend" or known.theme != "Onbekend":
         return known
 
-    haystack = " ".join(part for part in [company_name, description] if part).lower()
+    provider_sector_value = _normalize_provider_sector(provider_sector)
+    industry_match = _classify_by_industry(provider_industry)
+    if provider_sector_value != "Onbekend" or industry_match is not None:
+        sector = provider_sector_value
+        theme = "Onbekend"
+        if industry_match is not None:
+            industry_sector, theme = industry_match
+            if sector == "Onbekend":
+                sector = industry_sector
+        confidence = 0.88 if sector != "Onbekend" and theme != "Onbekend" else 0.72
+        return SymbolClassification(
+            symbol=normalized,
+            sector=sector,
+            theme=theme,
+            industry=(provider_industry or "").strip(),
+            confidence=confidence,
+            source="provider_profile",
+            reason="Sector/industrie uit providerprofiel gecombineerd met lokale thema-mapping.",
+        )
+
+    haystack = " ".join(part for part in [company_name, provider_industry, description] if part).lower()
     for keywords, (sector, theme) in KEYWORD_CLASSIFICATIONS:
         if any(keyword in haystack for keyword in keywords):
-            return SymbolClassification(symbol=normalized, sector=sector, theme=theme)
+            return SymbolClassification(
+                symbol=normalized,
+                sector=sector,
+                theme=theme,
+                industry=(provider_industry or "").strip(),
+                confidence=0.64,
+                source="description_keywords",
+                reason="Afgeleid uit bedrijfsnaam/omschrijving met lokale keyword-regels.",
+            )
     return known
+
+
+def _normalize_provider_sector(sector: str | None) -> str:
+    normalized = " ".join(str(sector or "").strip().lower().split())
+    if not normalized:
+        return "Onbekend"
+    return PROVIDER_SECTOR_MAP.get(normalized, str(sector).strip())
+
+
+def _classify_by_industry(industry: str | None) -> tuple[str, str] | None:
+    normalized = " ".join(str(industry or "").strip().lower().split())
+    if not normalized:
+        return None
+    for keywords, classification in INDUSTRY_CLASSIFICATIONS:
+        if any(keyword in normalized for keyword in keywords):
+            return classification
+    return None
