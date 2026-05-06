@@ -412,6 +412,63 @@ class WebTests(unittest.TestCase):
             self.assertIn("Aperam dividend", trusted_html)
             self.assertNotIn("Aperam dividend", rejected_html)
 
+    def test_knowledge_import_reads_text_file_path(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            source_path = Path(tmp) / "bb-column.md"
+            source_path.write_text("Een column over dividend en vrije kasstroom.", encoding="utf-8")
+
+            message = save_knowledge_document_workflow(
+                repo,
+                {
+                    "source_type": ["educatie"],
+                    "publication_date": ["2026-05-06"],
+                    "scope_type": ["algemeen"],
+                    "file_path": [str(source_path)],
+                },
+            )
+
+            self.assertIn("bb-column", message)
+            document = repo.list_knowledge_documents()[0]
+            self.assertEqual(document.title, "bb-column")
+            self.assertEqual(document.source_path, str(source_path))
+            self.assertIn("vrije kasstroom", document.raw_text)
+
+    def test_knowledge_import_reads_simple_digital_pdf(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            source_path = Path(tmp) / "digital-column.pdf"
+            source_path.write_bytes(
+                b"%PDF-1.4\n"
+                b"1 0 obj\n"
+                b"<< /Length 58 >>\n"
+                b"stream\n"
+                b"BT /F1 12 Tf 72 720 Td (PDF dividend en vrije kasstroom) Tj ET\n"
+                b"endstream\n"
+                b"endobj\n%%EOF\n"
+            )
+
+            save_knowledge_document_workflow(
+                repo,
+                {
+                    "title": ["Digitale PDF"],
+                    "source_type": ["beleggers_belangen"],
+                    "publication_date": ["2026-05-06"],
+                    "scope_type": ["algemeen"],
+                    "file_path": [str(source_path)],
+                },
+            )
+
+            document = repo.list_knowledge_documents()[0]
+            self.assertEqual(document.title, "Digitale PDF")
+            self.assertIn("PDF dividend en vrije kasstroom", document.raw_text)
+
     def test_status_page_renders_v1_control_panel(self) -> None:
         import tempfile
 

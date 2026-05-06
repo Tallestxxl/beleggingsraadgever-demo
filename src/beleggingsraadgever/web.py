@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 from .advisor import Advisor
 from .collector import collect_snapshot_data
+from .document_text import extract_text_from_file
 from .formatting import format_currency, format_dutch_number
 from .importer import (
     SnapshotValidationError,
@@ -1021,6 +1022,10 @@ def render_knowledge_import_form() -> str:
             <label for="knowledge-source-path">Bronpad of URL</label>
             <input id="knowledge-source-path" name="source_path" type="text" autocomplete="off">
           </div>
+        </div>
+        <div>
+          <label for="knowledge-file-path">Bestandspad (.txt, .md, digitale .pdf)</label>
+          <input id="knowledge-file-path" name="file_path" type="text" autocomplete="off">
         </div>
         <div class="form-grid">
           <div>
@@ -2061,19 +2066,26 @@ def save_knowledge_document_workflow(repository: SQLiteRepository, params: dict)
     publication_date = _first_param(params, "publication_date") or None
     source_path = _first_param(params, "source_path") or None
     raw_text = _first_param(params, "raw_text")
+    file_path = _first_param(params, "file_path")
     scope_type = _first_param(params, "scope_type") or "algemeen"
     scope_value = _first_param(params, "scope_value")
     extra_tags = _first_param(params, "tags")
     status = _first_param(params, "status") or "voorgesteld"
 
+    if file_path and not raw_text:
+        raw_text = extract_text_from_file(Path(file_path))
+    if not title and file_path:
+        title = Path(file_path).expanduser().stem
     if not title:
-        raise ValueError("Titel is verplicht.")
+        raise ValueError("Titel is verplicht, behalve bij bestandsimport waar de bestandsnaam gebruikt kan worden.")
     if not raw_text:
-        raise ValueError("Tekstfragment is verplicht.")
+        raise ValueError("Tekstfragment of bestandspad is verplicht.")
     if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
         raise ValueError("Onbekende kennisstatus.")
     if publication_date:
         _required_iso_date(publication_date)
+    if file_path and not source_path:
+        source_path = str(Path(file_path).expanduser())
     tags = build_knowledge_tags(scope_type, scope_value, extra_tags)
     document_id = repository.add_document(
         title=title,
