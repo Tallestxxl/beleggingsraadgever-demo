@@ -108,6 +108,10 @@ def _peer_symbols(
     peers = []
     seen = {symbol}
 
+    for candidate in repository.peer_candidates_for_symbol(symbol):
+        if candidate.peer_group == peer_group:
+            _add_peer_candidate(peers, seen, candidate.peer_symbol)
+
     for candidate in PEERS_BY_SYMBOL.get(symbol, []):
         normalized_candidate = candidate.strip().upper()
         if _same_peer_group(repository, normalized_candidate, peer_group):

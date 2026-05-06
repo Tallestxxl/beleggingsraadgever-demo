@@ -339,6 +339,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("CSV-import", html)
             self.assertIn("Effectenportefeuille", html)
             self.assertIn("Sectorverdeling effecten", html)
+            self.assertIn("Peerdekking", html)
             self.assertIn("% effecten", html)
             self.assertNotIn("% totaal", html)
             self.assertIn("DEMO", html)

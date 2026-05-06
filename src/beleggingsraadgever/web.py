@@ -27,6 +27,7 @@ from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk,
 from .classification import classify_company, classify_symbol
 from .models import InvestorProfile, PortfolioAsset, PortfolioClassification, PortfolioPosition
 from .models import PortfolioPerformanceSummary, PortfolioPositionPerformance
+from .peer_discovery import refresh_peer_candidates, refresh_peer_candidates_for_portfolio
 from .portfolio import exposure_buckets, portfolio_position_exposures
 from .portfolio_importer import import_portfolio_csv
 from .real_data import DRAFTS_DIR, PROCESSED_DIR, seed_curated_snapshots
@@ -490,6 +491,7 @@ def serve(
     if seed:
         seed_demo(repository)
         seed_curated_snapshots(repository)
+    refresh_peer_candidates_for_portfolio(repository)
 
     handler = _make_handler(repository)
     server = ThreadingHTTPServer((host, port), handler)
@@ -763,6 +765,7 @@ def render_portfolio_dashboard(
     position_performance = repository.latest_portfolio_position_performances()
     positions = portfolio_position_rows(exposures, position_performance)
     aliases = repository.portfolio_aliases()
+    peer_coverage = portfolio_peer_coverage_rows(repository, [row["symbol"] for row in positions])
     securities_value = sum(row["market_value"] for row in positions)
     asset_value = sum(asset.value for asset in assets)
     total_value = securities_value + asset_value
@@ -813,6 +816,10 @@ def render_portfolio_dashboard(
         <section>
           <h3>Themaverdeling effecten</h3>
           {render_exposure_table(exposure_buckets(exposures, by="theme", total_wealth=total_value))}
+        </section>
+        <section>
+          <h3>Peerdekking</h3>
+          {render_peer_coverage_table(peer_coverage)}
         </section>
       </div>
       <div>
@@ -1060,6 +1067,60 @@ def render_exposure_table(buckets) -> str:
           </table>"""
 
 
+def portfolio_peer_coverage_rows(repository: SQLiteRepository, symbols: list[str]) -> list[dict]:
+    grouped_candidates = repository.peer_candidates_for_symbols(symbols)
+    rows = []
+    for symbol in symbols:
+        candidates = grouped_candidates.get(symbol.upper(), [])
+        classification = repository.portfolio_classification(symbol)
+        peer_group = candidates[0].peer_group if candidates else ""
+        if not peer_group and classification is not None and classification.theme != "Onbekend":
+            peer_group = classification.theme
+        available = sum(1 for candidate in candidates if _has_analysis_snapshots(repository, candidate.peer_symbol))
+        rows.append(
+            {
+                "symbol": symbol,
+                "peer_group": peer_group or "Nog onbekend",
+                "candidate_count": len(candidates),
+                "available_count": available,
+                "missing_count": max(0, len(candidates) - available),
+                "examples": ", ".join(candidate.peer_symbol for candidate in candidates[:5]),
+            }
+        )
+    return rows
+
+
+def render_peer_coverage_table(rows: list[dict]) -> str:
+    if not rows:
+        return '<p class="evidence-meta">Nog geen portefeuilleposities om peers voor te bepalen.</p>'
+    body = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(row["symbol"])}</td>
+          <td>{html.escape(row["peer_group"])}</td>
+          <td>{row["candidate_count"]}</td>
+          <td>{row["available_count"]}</td>
+          <td>{row["missing_count"]}</td>
+          <td>{html.escape(row["examples"]) if row["examples"] else "Nog te verrijken"}</td>
+        </tr>"""
+        for row in rows
+    )
+    return f"""
+          <table class="data-table">
+            <thead><tr><th>Aandeel</th><th>Peer-groep</th><th>Peers</th><th>Met data</th><th>Wacht op data</th><th>Voorbeelden</th></tr></thead>
+            <tbody>{body}</tbody>
+          </table>"""
+
+
+def _has_analysis_snapshots(repository: SQLiteRepository, symbol: str) -> bool:
+    try:
+        repository.latest_financial_snapshot(symbol)
+        repository.latest_market_snapshot(symbol)
+    except LookupError:
+        return False
+    return True
+
+
 def save_portfolio_profile(repository: SQLiteRepository, params: dict) -> None:
     risk_profile = _first_param(params, "risk_profile") or "gebalanceerd"
     if risk_profile not in {"defensief", "gebalanceerd", "offensief"}:
@@ -1103,6 +1164,7 @@ def save_portfolio_position(repository: SQLiteRepository, params: dict) -> None:
     repository.upsert_portfolio_classification(
         PortfolioClassification(symbol=symbol, sector=classification.sector, theme=classification.theme)
     )
+    refresh_peer_candidates(repository, symbol)
 
 
 def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) -> str:
@@ -1416,6 +1478,7 @@ def _store_snapshot_classification(repository: SQLiteRepository, symbol: str, sn
     repository.upsert_portfolio_classification(
         PortfolioClassification(symbol=symbol, sector=str(sector), theme=str(theme))
     )
+    refresh_peer_candidates(repository, symbol)
 
 
 def _classification_value_missing(value: object) -> bool:

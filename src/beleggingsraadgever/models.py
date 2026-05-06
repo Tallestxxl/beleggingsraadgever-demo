@@ -238,6 +238,16 @@ class PeerAnalysis:
 
 
 @dataclass(frozen=True)
+class PeerCandidate:
+    symbol: str
+    peer_symbol: str
+    peer_group: str
+    source: str
+    confidence: float
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class AdviceReport:
     symbol: str
     verdict: str

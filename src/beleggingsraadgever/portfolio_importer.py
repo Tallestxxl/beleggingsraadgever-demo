@@ -18,6 +18,7 @@ from .models import (
     PortfolioPositionPerformance,
     PortfolioPrice,
 )
+from .peer_discovery import refresh_peer_candidates
 from .storage import SQLiteRepository
 
 
@@ -27,6 +28,7 @@ class PortfolioCsvImportResult:
     imported_market_prices: int = 0
     imported_position_performance: int = 0
     imported_performance_summary: bool = False
+    discovered_peer_candidates: int = 0
     skipped_rows: list[str] = field(default_factory=list)
     as_of: str = ""
 
@@ -35,9 +37,10 @@ class PortfolioCsvImportResult:
         skipped = f", {len(self.skipped_rows)} overgeslagen" if self.skipped_rows else ""
         performance = f", {self.imported_position_performance} resultaatregels"
         total = ", historische samenvatting" if self.imported_performance_summary else ""
+        peers = f", {self.discovered_peer_candidates} peer-kandidaten"
         return (
             f"CSV-import klaar: {self.imported_positions} posities, "
-            f"{self.imported_market_prices} koersen{performance}{total}{skipped}."
+            f"{self.imported_market_prices} koersen{performance}{total}{peers}{skipped}."
         )
 
 
@@ -61,6 +64,7 @@ def import_portfolio_csv(repository: SQLiteRepository, path: Path) -> PortfolioC
     imported_positions = 0
     imported_market_prices = 0
     imported_position_performance = 0
+    discovered_peer_candidates = 0
     skipped_rows: list[str] = []
 
     for row in rows[header_index + 1 :]:
@@ -100,6 +104,7 @@ def import_portfolio_csv(repository: SQLiteRepository, path: Path) -> PortfolioC
         repository.upsert_portfolio_classification(
             PortfolioClassification(symbol=symbol, sector=classification.sector, theme=classification.theme)
         )
+        discovered_peer_candidates += len(refresh_peer_candidates(repository, symbol))
         imported_positions += 1
 
         if market_price is not None and market_price > 0:
@@ -132,6 +137,7 @@ def import_portfolio_csv(repository: SQLiteRepository, path: Path) -> PortfolioC
         imported_market_prices=imported_market_prices,
         imported_position_performance=imported_position_performance,
         imported_performance_summary=imported_performance_summary,
+        discovered_peer_candidates=discovered_peer_candidates,
         skipped_rows=skipped_rows,
         as_of=as_of,
     )

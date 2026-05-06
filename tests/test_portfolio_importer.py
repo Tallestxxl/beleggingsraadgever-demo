@@ -33,6 +33,7 @@ Aandelen,"","","","","","","","",""
             self.assertEqual(result.imported_market_prices, 2)
             self.assertEqual(result.imported_position_performance, 2)
             self.assertTrue(result.imported_performance_summary)
+            self.assertGreaterEqual(result.discovered_peer_candidates, 2)
             self.assertEqual(result.skipped_rows, ["DIV FUGRO MEI26"])
             self.assertEqual(result.as_of, "2026-05-05")
             self.assertEqual([position.symbol for position in positions], ["APERAM", "BESI"])
@@ -47,6 +48,10 @@ Aandelen,"","","","","","","","",""
             besi_aliases = {alias.alias_key for alias in repo.portfolio_aliases_for_symbol("BESI")}
             self.assertIn("BESI", besi_aliases)
             self.assertIn("BE_SEMICONDUCTOR_IND", besi_aliases)
+            besi_peers = {candidate.peer_symbol for candidate in repo.peer_candidates_for_symbol("BESI")}
+            self.assertIn("ASML", besi_peers)
+            self.assertIn("ASMI", besi_peers)
+            self.assertIn("LAM RESEARCH", besi_peers)
             summary = repo.latest_portfolio_performance_summary()
             self.assertIsNotNone(summary)
             self.assertEqual(summary.period_label, "2026")

@@ -16,6 +16,7 @@ from .models import (
     KnowledgeHit,
     MacroObservation,
     MarketSnapshot,
+    PeerCandidate,
     PortfolioAsset,
     PortfolioAlias,
     PortfolioClassification,
@@ -235,6 +236,18 @@ CREATE TABLE IF NOT EXISTS snapshot_imports (
   source_checksum TEXT NOT NULL,
   processed_path TEXT,
   UNIQUE(symbol, source_checksum)
+);
+
+CREATE TABLE IF NOT EXISTS peer_candidates (
+  symbol TEXT NOT NULL,
+  peer_symbol TEXT NOT NULL,
+  peer_group TEXT NOT NULL,
+  source TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(symbol, peer_symbol)
 );
 """
 
@@ -1094,3 +1107,82 @@ class SQLiteRepository:
                 """
             ).fetchall()
         return [row["symbol"] for row in rows]
+
+    def replace_peer_candidates(self, symbol: str, candidates: Iterable[PeerCandidate]) -> None:
+        normalized_symbol = symbol.upper()
+        with self.connect() as conn:
+            conn.execute("DELETE FROM peer_candidates WHERE symbol = ?", (normalized_symbol,))
+            for candidate in candidates:
+                conn.execute(
+                    """
+                    INSERT INTO peer_candidates
+                      (symbol, peer_symbol, peer_group, source, confidence, reason)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, peer_symbol) DO UPDATE SET
+                      peer_group=excluded.peer_group,
+                      source=excluded.source,
+                      confidence=excluded.confidence,
+                      reason=excluded.reason,
+                      updated_at=CURRENT_TIMESTAMP
+                    """,
+                    (
+                        normalized_symbol,
+                        candidate.peer_symbol.upper(),
+                        candidate.peer_group,
+                        candidate.source,
+                        candidate.confidence,
+                        candidate.reason,
+                    ),
+                )
+
+    def peer_candidates_for_symbol(self, symbol: str) -> List[PeerCandidate]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT symbol, peer_symbol, peer_group, source, confidence, reason
+                FROM peer_candidates
+                WHERE symbol = ?
+                ORDER BY confidence DESC, peer_symbol
+                """,
+                (symbol.upper(),),
+            ).fetchall()
+        return [
+            PeerCandidate(
+                symbol=row["symbol"],
+                peer_symbol=row["peer_symbol"],
+                peer_group=row["peer_group"],
+                source=row["source"],
+                confidence=row["confidence"],
+                reason=row["reason"],
+            )
+            for row in rows
+        ]
+
+    def peer_candidates_for_symbols(self, symbols: Iterable[str]) -> dict[str, List[PeerCandidate]]:
+        normalized = sorted({symbol.upper() for symbol in symbols if symbol})
+        if not normalized:
+            return {}
+        placeholders = ",".join("?" for _ in normalized)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT symbol, peer_symbol, peer_group, source, confidence, reason
+                FROM peer_candidates
+                WHERE symbol IN ({placeholders})
+                ORDER BY symbol, confidence DESC, peer_symbol
+                """,
+                normalized,
+            ).fetchall()
+        grouped = {symbol: [] for symbol in normalized}
+        for row in rows:
+            grouped.setdefault(row["symbol"], []).append(
+                PeerCandidate(
+                    symbol=row["symbol"],
+                    peer_symbol=row["peer_symbol"],
+                    peer_group=row["peer_group"],
+                    source=row["source"],
+                    confidence=row["confidence"],
+                    reason=row["reason"],
+                )
+            )
+        return grouped

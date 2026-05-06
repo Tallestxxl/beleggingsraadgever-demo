@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 from .classification import classify_company
 from .models import DataSource, FinancialSnapshot, MarketSnapshot, Principle
 from .models import PortfolioClassification
+from .peer_discovery import refresh_peer_candidates
 from .storage import SQLiteRepository
 
 
@@ -83,6 +84,7 @@ def import_company_snapshot(repository: SQLiteRepository, path: Path) -> str:
     document_ids = _import_documents(repository, data.get("documents", []))
     _import_principles(repository, document_ids, data.get("principles", []))
     _import_classification(repository, symbol, data)
+    refresh_peer_candidates(repository, symbol)
     repository.record_snapshot_import(
         symbol=symbol,
         imported_from=str(snapshot_path),
