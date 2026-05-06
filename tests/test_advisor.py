@@ -12,6 +12,7 @@ from beleggingsraadgever.models import (
     FinancialSnapshot,
     InvestorProfile,
     MarketSnapshot,
+    PeerCandidate,
     PortfolioClassification,
     PortfolioAlias,
     PortfolioPosition,
@@ -20,6 +21,7 @@ from beleggingsraadgever.models import (
 )
 from beleggingsraadgever.sample_data import seed_demo
 from beleggingsraadgever.storage import SQLiteRepository
+from beleggingsraadgever.peer_discovery import refresh_peer_candidates
 
 
 class AdvisorTests(unittest.TestCase):
@@ -333,6 +335,8 @@ class AdvisorTests(unittest.TestCase):
                     )
                 )
 
+            refresh_peer_candidates(repo, "CUSTOM_A")
+
             report = Advisor(repo).analyze_snapshots(
                 "CUSTOM_A",
                 FinancialSnapshot(
@@ -361,6 +365,82 @@ class AdvisorTests(unittest.TestCase):
             self.assertEqual(report.peer_analysis.available_peer_count, 2)
             self.assertEqual(report.peer_analysis.configured_peer_count, 2)
             self.assertNotIn("CUSTOM_D", [row.symbol for row in report.peer_analysis.rows])
+
+    def test_peer_analysis_rejects_alias_and_wrong_curated_group_even_with_stale_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.upsert_portfolio_alias(
+                PortfolioAlias(
+                    portfolio_symbol="BAMNB",
+                    alias_key="BAM",
+                    alias_type="analysis_input",
+                    raw_value="BAM",
+                    source="test",
+                )
+            )
+            for symbol in ["BAMNB", "BAM", "NVIDIA"]:
+                repo.upsert_portfolio_classification(
+                    PortfolioClassification(symbol=symbol, sector="Industrials", theme="Construction")
+                )
+            repo.replace_peer_candidates(
+                "BAMNB",
+                [
+                    PeerCandidate(
+                        symbol="BAMNB",
+                        peer_symbol="BAM",
+                        peer_group="Construction",
+                        source="stale",
+                        confidence=0.9,
+                    ),
+                    PeerCandidate(
+                        symbol="BAMNB",
+                        peer_symbol="NVIDIA",
+                        peer_group="Construction",
+                        source="stale",
+                        confidence=0.9,
+                    ),
+                ],
+            )
+            peer_snapshots = {}
+            for symbol in ["BAM", "NVIDIA"]:
+                peer_snapshots[symbol] = (
+                    FinancialSnapshot(
+                        symbol=symbol,
+                        period_end="2025-12-31",
+                        period_type="TTM",
+                        revenue=1_000_000_000,
+                        operating_margin=0.40,
+                    ),
+                    MarketSnapshot(
+                        symbol=symbol,
+                        as_of="2026-05-06",
+                        close_price=100,
+                        currency="EUR",
+                        pe_ratio=40,
+                    ),
+                )
+
+            report = Advisor(repo).analyze_snapshots(
+                "BAMNB",
+                FinancialSnapshot(
+                    symbol="BAMNB",
+                    period_end="2025-12-31",
+                    period_type="TTM",
+                    revenue=7_000_000_000,
+                    operating_margin=0.032,
+                ),
+                MarketSnapshot(
+                    symbol="BAMNB",
+                    as_of="2026-05-06",
+                    close_price=9.45,
+                    currency="EUR",
+                    pe_ratio=11.8,
+                ),
+                peer_snapshots=peer_snapshots,
+            )
+
+            self.assertIsNone(report.peer_analysis)
 
     def test_portfolio_fit_matches_existing_position_by_broker_alias(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

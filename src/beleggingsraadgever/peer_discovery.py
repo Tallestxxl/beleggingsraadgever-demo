@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from .classification import CLASSIFICATION_BY_SYMBOL
-from .models import PeerCandidate, PortfolioClassification
-from .peers import PEERS_BY_SYMBOL, PEERS_BY_THEME
-from .portfolio import effective_classification
+from .models import PeerCandidate
+from .peers import PEERS_BY_SYMBOL, PEERS_BY_THEME, peer_group_for_symbol, same_company
 from .storage import SQLiteRepository
 
 
@@ -24,8 +23,7 @@ def refresh_peer_candidates_for_portfolio(repository: SQLiteRepository) -> dict[
 
 def discover_peer_candidates(repository: SQLiteRepository, symbol: str) -> list[PeerCandidate]:
     normalized_symbol = symbol.strip().upper()
-    classification = effective_classification(repository, normalized_symbol)
-    peer_group = _peer_group(classification)
+    peer_group = peer_group_for_symbol(repository, normalized_symbol)
     if not peer_group:
         return []
 
@@ -74,7 +72,7 @@ def discover_peer_candidates(repository: SQLiteRepository, symbol: str) -> list[
     for local_classification in repository.portfolio_classifications():
         if local_classification.symbol not in local_snapshot_symbols:
             continue
-        if _peer_group(local_classification) != peer_group:
+        if peer_group_for_symbol(repository, local_classification.symbol) != peer_group:
             continue
         _add_candidate(
             candidates,
@@ -105,6 +103,8 @@ def _add_candidate(
     normalized_peer = peer_symbol.strip().upper()
     if not normalized_peer or normalized_peer == symbol:
         return
+    if same_company(repository, symbol, normalized_peer):
+        return
     if not _is_compatible_peer(repository, normalized_peer, peer_group, allow_theme_list=allow_theme_list):
         return
     candidate = PeerCandidate(
@@ -131,11 +131,4 @@ def _is_compatible_peer(
         return False
     if allow_theme_list and symbol in PEERS_BY_THEME.get(peer_group, []):
         return True
-    return _peer_group(effective_classification(repository, symbol)) == peer_group
-
-
-def _peer_group(classification: PortfolioClassification) -> str:
-    theme = classification.theme.strip()
-    if theme and theme != "Onbekend":
-        return theme
-    return ""
+    return peer_group_for_symbol(repository, symbol) == peer_group

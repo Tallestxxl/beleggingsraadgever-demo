@@ -5,6 +5,7 @@ from __future__ import annotations
 from statistics import median
 from typing import Dict, Iterable, Optional, Tuple
 
+from .identity import normalize_symbol
 from .indicators import build_score
 from .models import FinancialSnapshot, MarketSnapshot, PeerAnalysis, PeerComparisonRow, PortfolioClassification
 from .portfolio import effective_classification
@@ -54,13 +55,12 @@ def build_peer_analysis(
     extra_snapshots: Optional[Dict[str, SnapshotPair]] = None,
 ) -> Optional[PeerAnalysis]:
     normalized_symbol = symbol.strip().upper()
-    classification = effective_classification(repository, normalized_symbol)
-    peer_group = _peer_group(classification)
+    peer_group = peer_group_for_symbol(repository, normalized_symbol)
     if not peer_group:
         return None
 
     snapshots = extra_snapshots or {}
-    peer_symbols = _peer_symbols(repository, normalized_symbol, peer_group, snapshots)
+    peer_symbols = _peer_symbols(repository, normalized_symbol, peer_group)
     configured_peer_count = len(peer_symbols)
     target_row = _peer_row(normalized_symbol, financial, market, True)
     peer_rows = []
@@ -103,43 +103,35 @@ def _peer_symbols(
     repository: SQLiteRepository,
     symbol: str,
     peer_group: str,
-    extra_snapshots: Dict[str, SnapshotPair],
 ) -> list[str]:
     peers = []
     seen = {symbol}
 
     for candidate in repository.peer_candidates_for_symbol(symbol):
-        if candidate.peer_group == peer_group:
-            _add_peer_candidate(peers, seen, candidate.peer_symbol)
+        if candidate.peer_group == peer_group and _same_peer_group(repository, candidate.peer_symbol, peer_group):
+            _add_peer_candidate(repository, symbol, peers, seen, candidate.peer_symbol)
 
     for candidate in PEERS_BY_SYMBOL.get(symbol, []):
         normalized_candidate = candidate.strip().upper()
         if _same_peer_group(repository, normalized_candidate, peer_group):
-            _add_peer_candidate(peers, seen, normalized_candidate)
+            _add_peer_candidate(repository, symbol, peers, seen, normalized_candidate)
 
     for candidate in PEERS_BY_THEME.get(peer_group, []):
-        _add_peer_candidate(peers, seen, candidate.strip().upper())
-
-    for candidate in _local_snapshot_symbols(repository, extra_snapshots):
-        if _same_peer_group(repository, candidate, peer_group):
-            _add_peer_candidate(peers, seen, candidate)
+        _add_peer_candidate(repository, symbol, peers, seen, candidate.strip().upper())
 
     return peers
 
 
-def _add_peer_candidate(peers: list[str], seen: set[str], candidate: str) -> None:
-    if candidate not in seen:
+def _add_peer_candidate(
+    repository: SQLiteRepository,
+    symbol: str,
+    peers: list[str],
+    seen: set[str],
+    candidate: str,
+) -> None:
+    if candidate not in seen and not same_company(repository, symbol, candidate):
         seen.add(candidate)
         peers.append(candidate)
-
-
-def _local_snapshot_symbols(
-    repository: SQLiteRepository,
-    extra_snapshots: Dict[str, SnapshotPair],
-) -> list[str]:
-    symbols = set(repository.symbols_with_snapshots())
-    symbols.update(symbol.strip().upper() for symbol in extra_snapshots)
-    return sorted(symbols)
 
 
 def _same_peer_group(repository: SQLiteRepository, symbol: str, peer_group: str) -> bool:
@@ -147,7 +139,28 @@ def _same_peer_group(repository: SQLiteRepository, symbol: str, peer_group: str)
         return False
     if symbol in PEERS_BY_THEME.get(peer_group, []):
         return True
-    return _peer_group(effective_classification(repository, symbol)) == peer_group
+    return peer_group_for_symbol(repository, symbol) == peer_group
+
+
+def peer_group_for_symbol(repository: SQLiteRepository, symbol: str) -> str:
+    normalized_symbol = symbol.strip().upper()
+    curated_groups = [
+        group
+        for group, symbols in PEERS_BY_THEME.items()
+        if normalized_symbol in {candidate.strip().upper() for candidate in symbols}
+    ]
+    if len(set(curated_groups)) == 1:
+        return curated_groups[0]
+    return _peer_group(effective_classification(repository, normalized_symbol))
+
+
+def same_company(repository: SQLiteRepository, left: str, right: str) -> bool:
+    return _canonical_symbol(repository, left) == _canonical_symbol(repository, right)
+
+
+def _canonical_symbol(repository: SQLiteRepository, symbol: str) -> str:
+    normalized_symbol = normalize_symbol(symbol)
+    return repository.resolve_portfolio_aliases([normalized_symbol]).get(normalized_symbol, normalized_symbol)
 
 
 def _peer_group(classification: PortfolioClassification) -> str:
