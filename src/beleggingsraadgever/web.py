@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 from .advisor import Advisor
 from .collector import collect_snapshot_data
+from .formatting import format_currency, format_dutch_number
 from .importer import (
     SnapshotValidationError,
     import_company_snapshot,
@@ -1016,7 +1017,7 @@ def render_positions_table(positions: list[dict]) -> str:
           <td>{html.escape(row["symbol"])}</td>
           <td>{html.escape(row["sector"])}</td>
           <td>{html.escape(row["theme"])}</td>
-          <td>{row["quantity"]:,.4f}</td>
+          <td>{format_quantity(row["quantity"])}</td>
           <td>{format_eur_cents(row["average_cost"])}</td>
           <td>{format_eur_cents(row["market_price"])}</td>
           <td>{format_eur(row["market_value"])}</td>
@@ -1221,16 +1222,15 @@ def portfolio_position_rows(
 
 
 def format_eur(value: Optional[float]) -> str:
-    if value is None:
-        return "EUR 0"
-    return f"EUR {value:,.0f}".replace(",", ".")
+    return format_currency(value, "EUR", decimals=0)
 
 
 def format_eur_cents(value: Optional[float]) -> str:
-    if value is None:
-        return "EUR 0,00"
-    formatted = f"EUR {value:,.2f}"
-    return formatted.replace(",", "_").replace(".", ",").replace("_", ".")
+    return format_currency(value, "EUR", decimals=2)
+
+
+def format_quantity(value: float) -> str:
+    return format_dutch_number(value, decimals=4)
 
 
 def format_percent(value: float) -> str:
@@ -1250,10 +1250,10 @@ def format_compact_amount(value: Optional[float]) -> str:
         return "n.b."
     abs_value = abs(value)
     if abs_value >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.1f} mld"
+        return f"{format_dutch_number(value / 1_000_000_000, decimals=1)} mld"
     if abs_value >= 1_000_000:
-        return f"{value / 1_000_000:.1f} mln"
-    return f"{value:,.0f}".replace(",", ".")
+        return f"{format_dutch_number(value / 1_000_000, decimals=1)} mln"
+    return format_dutch_number(value, decimals=0)
 
 
 def format_input_number(value: Optional[float]) -> str:

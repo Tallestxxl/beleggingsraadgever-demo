@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from .formatting import format_currency
 from .identity import aliases_for_data_sources, candidate_portfolio_symbols, normalize_symbol
 from .indicators import build_score, conviction_from_score, verdict_from_score
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeHit, MarketSnapshot, PortfolioFit
@@ -177,12 +178,12 @@ class Advisor:
             lines.append(fit.summary)
             lines.extend(
                 [
-                    f"- Huidige waarde positie: EUR {fit.position_value:,.0f}",
+                    f"- Huidige waarde positie: {_format_eur_plain(fit.position_value)}",
                     f"- Gewicht positie: {fit.position_weight:.1%}",
                     f"- Richtmaximum: {fit.max_weight:.1%}",
-                    f"- Ruimte tot richtmaximum: EUR {fit.room_to_max:,.0f}",
-                    f"- Maximale nieuwe koopruimte: EUR {fit.max_new_buy_amount:,.0f}",
-                    f"- Praktische koopruimte: EUR {fit.practical_buy_amount:,.0f}",
+                    f"- Ruimte tot richtmaximum: {_format_eur_plain(fit.room_to_max)}",
+                    f"- Maximale nieuwe koopruimte: {_format_eur_plain(fit.max_new_buy_amount)}",
+                    f"- Praktische koopruimte: {_format_eur_plain(fit.practical_buy_amount)}",
                 ]
             )
             if fit.sector != "Onbekend":
@@ -299,7 +300,7 @@ class Advisor:
         if position_weight > max_weight:
             notes.append("Huidig gewicht ligt boven het richtmaximum; bijkopen ligt niet voor de hand.")
         elif total_wealth:
-            notes.append(f"Resterende ruimte tot het richtmaximum is circa EUR {room_to_max:,.0f}.")
+            notes.append(f"Resterende ruimte tot het richtmaximum is circa {_format_eur_plain(room_to_max)}.")
         if score.total < 60:
             notes.append("De aandelenscore is lager dan 60; behandel eventuele koopruimte als onderzoeksruimte, niet als koopsignaal.")
         if score.flags:
@@ -669,9 +670,7 @@ def _score_buy_factor_label(score_total: float) -> str:
 
 
 def _format_eur_plain(value: Optional[float]) -> str:
-    if value is None:
-        return "EUR 0"
-    return f"EUR {value:,.0f}".replace(",", ".")
+    return format_currency(value, "EUR", decimals=0)
 
 
 def _format_percent_plain(value: Optional[float]) -> str:

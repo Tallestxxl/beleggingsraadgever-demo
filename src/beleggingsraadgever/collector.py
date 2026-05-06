@@ -17,6 +17,7 @@ from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
 from .classification import classify_company
+from .formatting import format_currency, format_dutch_number
 from .importer import load_company_snapshot, validate_company_snapshot, write_snapshot_template
 from .real_data import DRAFTS_DIR
 
@@ -615,7 +616,7 @@ def _market_data_sources(market_data: MarketData) -> List[Dict[str, str]]:
     sources = [
         {
             "field_name": "close_price",
-            "value_label": f"Slotkoers {market_data.currency} {market_data.close_price:,.2f}",
+            "value_label": f"Slotkoers {format_currency(market_data.close_price, market_data.currency, decimals=2)}",
             **market_common,
             "note": "Automatisch opgehaald als end-of-day koerspunt.",
         }
@@ -720,7 +721,7 @@ def _update_market_document(symbol: str, documents: List[Dict[str, object]], mar
     raw_text = (
         f"Automatisch opgehaalde marktdata voor {symbol} via {market_data.provider} "
         f"({market_data.provider_symbol}) tot en met {market_data.as_of}. "
-        f"Slotkoers: {market_data.currency} {market_data.close_price:,.2f}. "
+        f"Slotkoers: {format_currency(market_data.close_price, market_data.currency, decimals=2)}. "
         f"12-maands momentum: {_format_optional_percent(market_data.momentum_12m)}. "
         f"1-jaars volatiliteit: {_format_optional_percent(market_data.volatility_1y)}. "
         "Fundamentele cijfers, waardering, concurrentiepositie en managementsignalen moeten nog apart worden gecontroleerd."
@@ -743,7 +744,8 @@ def _update_summary_document(symbol: str, documents: List[Dict[str, object]], ma
         f"Datacollector-snapshot voor {symbol}"
         + (f" ({market_data.company_name})" if market_data.company_name else "")
         + f" via {market_data.provider} ({market_data.provider_symbol}).",
-        f"Koersdata tot en met {market_data.as_of}: {market_data.currency} {market_data.close_price:,.2f}.",
+        f"Koersdata tot en met {market_data.as_of}: "
+        f"{format_currency(market_data.close_price, market_data.currency, decimals=2)}.",
     ]
     if market_data.description:
         facts.append(f"Bedrijfsomschrijving uit bron: {market_data.description}")
@@ -798,13 +800,14 @@ def _format_percent(value: float, _currency: str) -> str:
 def _format_amount(value: float, currency: str) -> str:
     absolute = abs(value)
     sign = "-" if value < 0 else ""
+    prefix = f"{currency} {sign}"
     if absolute >= 1_000_000_000_000:
-        return f"{sign}{currency} {absolute / 1_000_000_000_000:.2f} bln"
+        return f"{prefix}{format_dutch_number(absolute / 1_000_000_000_000, decimals=2)} bln"
     if absolute >= 1_000_000_000:
-        return f"{sign}{currency} {absolute / 1_000_000_000:.2f} mld"
+        return f"{prefix}{format_dutch_number(absolute / 1_000_000_000, decimals=2)} mld"
     if absolute >= 1_000_000:
-        return f"{sign}{currency} {absolute / 1_000_000:.2f} mln"
-    return f"{currency} {value:,.2f}"
+        return f"{prefix}{format_dutch_number(absolute / 1_000_000, decimals=2)} mln"
+    return format_currency(value, currency, decimals=2)
 
 
 def _format_optional_amount(value: Optional[float], currency: str) -> str:
@@ -817,10 +820,10 @@ def _format_count(value: float, _currency: str) -> str:
     absolute = abs(value)
     sign = "-" if value < 0 else ""
     if absolute >= 1_000_000_000:
-        return f"{sign}{absolute / 1_000_000_000:.2f} mld"
+        return f"{sign}{format_dutch_number(absolute / 1_000_000_000, decimals=2)} mld"
     if absolute >= 1_000_000:
-        return f"{sign}{absolute / 1_000_000:.2f} mln"
-    return f"{value:,.0f}"
+        return f"{sign}{format_dutch_number(absolute / 1_000_000, decimals=2)} mln"
+    return format_dutch_number(value, decimals=0)
 
 
 def _format_optional_number(value: Optional[float]) -> str:
