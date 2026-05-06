@@ -118,6 +118,38 @@ class AdvisorTests(unittest.TestCase):
             self.assertEqual(report.portfolio_fit.sector, "Energy")
             self.assertEqual(report.portfolio_fit.theme, "Oil and gas")
 
+    def test_symbol_scoped_snapshot_evidence_must_match_analyzed_symbol(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.add_document(
+                title="BAM Brookfield snapshot",
+                source_type="public_data_snapshot",
+                raw_text="BAM Brookfield Asset Management waardering marge vrije kasstroom.",
+                tags=["BAM", "datacollector"],
+            )
+            repo.add_document(
+                title="Algemeen bouwprincipe",
+                source_type="beleggers_belangen",
+                raw_text="Bij bouwbedrijven zijn marges, kasstroom en schuld belangrijk.",
+                tags=["bouw", "marge"],
+            )
+
+            report = Advisor(repo).analyze_snapshots(
+                "BAMNB",
+                FinancialSnapshot(
+                    symbol="BAMNB",
+                    period_end="2025-12-31",
+                    period_type="TTM",
+                    revenue=1_000_000_000,
+                    operating_margin=0.04,
+                ),
+                MarketSnapshot(symbol="BAMNB", as_of="2026-05-06", close_price=4.50, currency="EUR"),
+            )
+
+            self.assertNotIn("BAM Brookfield snapshot", [hit.title for hit in report.evidence])
+            self.assertIn("Algemeen bouwprincipe", [hit.title for hit in report.evidence])
+
     def test_peer_analysis_compares_against_available_peer_snapshots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")

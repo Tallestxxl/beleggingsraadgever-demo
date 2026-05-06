@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from .identity import aliases_for_data_sources, candidate_portfolio_symbols
+from .identity import aliases_for_data_sources, candidate_portfolio_symbols, normalize_symbol
 from .indicators import build_score, conviction_from_score, verdict_from_score
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeHit, MarketSnapshot, PortfolioFit
 from .peers import SnapshotPair, build_peer_analysis
@@ -14,6 +14,11 @@ from .storage import SQLiteRepository
 
 SECTOR_WARNING_THRESHOLD = 0.20
 THEME_WARNING_THRESHOLD = 0.25
+SYMBOL_SCOPED_KNOWLEDGE_TYPES = {
+    "curated_public_sources",
+    "public_data_snapshot",
+    "public_market_data",
+}
 
 TRANSACTION_LABELS = {
     "niet_kopen": "Niet kopen",
@@ -407,7 +412,23 @@ class Advisor:
         if financial.free_cash_flow and financial.revenue and financial.free_cash_flow / financial.revenue > 0.10:
             query_parts.append("sterke vrije kasstroom kapitaalallocatie")
 
-        return self.repository.search_knowledge(" ".join(query_parts), limit=5)
+        accepted_symbols = self._accepted_evidence_symbols(symbol)
+        hits = self.repository.search_knowledge(" ".join(query_parts), limit=20)
+        return [
+            hit
+            for hit in hits
+            if _knowledge_hit_matches_symbol(hit, accepted_symbols)
+        ][:5]
+
+    def _accepted_evidence_symbols(self, symbol: str) -> set[str]:
+        accepted = {normalize_symbol(symbol)}
+        for alias in self.repository.portfolio_aliases_for_symbol(symbol):
+            accepted.add(normalize_symbol(alias.alias_key))
+            accepted.add(normalize_symbol(alias.raw_value))
+        alias_matches = self.repository.resolve_portfolio_aliases(candidate_portfolio_symbols(symbol))
+        accepted.update(normalize_symbol(alias) for alias in alias_matches.keys())
+        accepted.update(normalize_symbol(portfolio_symbol) for portfolio_symbol in alias_matches.values())
+        return {item for item in accepted if item}
 
     @staticmethod
     def _build_summary(
@@ -474,6 +495,17 @@ def _classification_symbol(
         if stored is not None and (stored.sector != "Onbekend" or stored.theme != "Onbekend"):
             return candidate
     return fallback_symbol
+
+
+def _knowledge_hit_matches_symbol(hit: KnowledgeHit, accepted_symbols: set[str]) -> bool:
+    if hit.source_type not in SYMBOL_SCOPED_KNOWLEDGE_TYPES:
+        return True
+    if not hit.chunk.tags:
+        return True
+    primary_tag = normalize_symbol(str(hit.chunk.tags[0]))
+    if not primary_tag:
+        return True
+    return primary_tag in accepted_symbols
 
 
 def _transaction_rationale(

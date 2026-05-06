@@ -33,6 +33,7 @@ from .portfolio_importer import import_portfolio_csv
 from .real_data import DRAFTS_DIR, PROCESSED_DIR, seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
+from .symbol_resolution import resolve_analysis_symbol
 
 
 @dataclass(frozen=True)
@@ -527,7 +528,8 @@ def _make_handler(repository: SQLiteRepository):
                 return
 
             params = parse_qs(parsed.query)
-            symbol = params.get("symbol", ["DEMO"])[0].strip().upper() or "DEMO"
+            raw_symbol = params.get("symbol", ["DEMO"])[0].strip().upper() or "DEMO"
+            symbol = resolve_analysis_symbol(repository, raw_symbol) or raw_symbol
             if parsed.path == "/portfolio":
                 message = params.get("message", [""])[0].strip()
                 self._send_html(build_portfolio_page(repository, message=message or None))
