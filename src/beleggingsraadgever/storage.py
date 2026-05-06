@@ -44,7 +44,9 @@ CREATE TABLE IF NOT EXISTS documents (
   source_path TEXT,
   checksum TEXT NOT NULL,
   raw_text TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  status TEXT NOT NULL DEFAULT 'vertrouwd',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
@@ -285,6 +287,9 @@ class SQLiteRepository:
     def init(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            self._ensure_column(conn, "documents", "status", "TEXT NOT NULL DEFAULT 'vertrouwd'")
+            self._ensure_column(conn, "documents", "updated_at", "TEXT")
+            conn.execute("UPDATE documents SET updated_at = created_at WHERE updated_at IS NULL")
             self._ensure_column(conn, "peer_candidates", "status", "TEXT NOT NULL DEFAULT 'vertrouwd'")
             self._backfill_portfolio_aliases(conn)
 
@@ -339,7 +344,10 @@ class SQLiteRepository:
         publication_date: Optional[str] = None,
         source_path: Optional[str] = None,
         tags: Iterable[str] = (),
+        status: str = "vertrouwd",
     ) -> int:
+        if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
+            raise ValueError("Onbekende kennisstatus.")
         checksum = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
         with self.connect() as conn:
             existing = conn.execute(
@@ -359,7 +367,8 @@ class SQLiteRepository:
                         author = ?,
                         publication_date = ?,
                         source_path = ?,
-                        raw_text = ?
+                        raw_text = ?,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                     """,
                     (title, author, publication_date, source_path, raw_text, document_id),
@@ -371,16 +380,30 @@ class SQLiteRepository:
             cursor = conn.execute(
                 """
                 INSERT INTO documents
-                  (source_type, title, author, publication_date, source_path, checksum, raw_text)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                  (source_type, title, author, publication_date, source_path, checksum, raw_text, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (source_type, title, author, publication_date, source_path, checksum, raw_text),
+                (source_type, title, author, publication_date, source_path, checksum, raw_text, status),
             )
             document_id = int(cursor.lastrowid)
 
             self._insert_knowledge_chunks(conn, document_id, raw_text, tags)
 
         return document_id
+
+    def update_knowledge_document_status(self, document_id: int, status: str) -> bool:
+        if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
+            raise ValueError("Onbekende kennisstatus.")
+        with self.connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE documents
+                SET status = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, document_id),
+            )
+            return cursor.rowcount > 0
 
     def _insert_knowledge_chunks(
         self,
@@ -419,7 +442,9 @@ class SQLiteRepository:
                   d.publication_date,
                   d.source_path,
                   d.raw_text,
+                  d.status,
                   d.created_at,
+                  d.updated_at,
                   COUNT(kc.id) AS chunk_count,
                   (
                     SELECT first_chunk.tags_json
@@ -453,7 +478,9 @@ class SQLiteRepository:
                     raw_text=row["raw_text"],
                     tags=tags,
                     chunk_count=row["chunk_count"],
+                    status=row["status"],
                     created_at=row["created_at"],
+                    updated_at=row["updated_at"],
                 )
             )
         return documents
@@ -531,6 +558,7 @@ class SQLiteRepository:
                   d.publication_date
                 FROM knowledge_chunks kc
                 JOIN documents d ON d.id = kc.document_id
+                WHERE d.status = 'vertrouwd'
                 """
             ).fetchall()
 
@@ -579,6 +607,7 @@ class SQLiteRepository:
                 SELECT kc.document_id, kc.tags_json, d.title
                 FROM knowledge_chunks kc
                 JOIN documents d ON d.id = kc.document_id
+                WHERE d.status = 'vertrouwd'
                 """
             ).fetchall()
 

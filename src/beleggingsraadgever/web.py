@@ -626,7 +626,10 @@ def _make_handler(repository: SQLiteRepository):
             symbol = resolve_analysis_symbol(repository, raw_symbol) or raw_symbol
             if parsed.path == "/knowledge":
                 message = params.get("message", [""])[0].strip()
-                self._send_html(build_knowledge_page(repository, message=message or None))
+                try:
+                    self._send_html(build_knowledge_page(repository, message=message or None, filters=params))
+                except ValueError as error:
+                    self._send_html(build_knowledge_page(repository, error=str(error)))
                 return
             if parsed.path == "/status":
                 message = params.get("message", [""])[0].strip()
@@ -663,6 +666,7 @@ def _make_handler(repository: SQLiteRepository):
                 "/portfolio/profile",
                 "/portfolio/position",
                 "/knowledge/import",
+                "/knowledge/status",
                 "/status/refresh-peers",
                 "/status/peer-status",
             }:
@@ -703,6 +707,15 @@ def _make_handler(repository: SQLiteRepository):
                     message = save_knowledge_document_workflow(repository, params)
                 except ValueError as error:
                     self._send_html(build_knowledge_page(repository, error=str(error)))
+                    return
+                self._redirect(f"/knowledge?message={quote_plus(message)}")
+                return
+
+            if parsed.path == "/knowledge/status":
+                try:
+                    message = update_knowledge_document_status_workflow(repository, params)
+                except ValueError as error:
+                    self._redirect(f"/knowledge?message={quote_plus(str(error))}")
                     return
                 self._redirect(f"/knowledge?message={quote_plus(message)}")
                 return
@@ -910,8 +923,9 @@ def build_knowledge_page(
     repository: SQLiteRepository,
     message: Optional[str] = None,
     error: Optional[str] = None,
+    filters: Optional[dict] = None,
 ) -> str:
-    return build_shell("DEMO", render_knowledge_dashboard(repository, message=message, error=error))
+    return build_shell("DEMO", render_knowledge_dashboard(repository, message=message, error=error, filters=filters))
 
 
 SOURCE_TYPE_LABELS = {
@@ -923,14 +937,23 @@ SOURCE_TYPE_LABELS = {
     "overig": "Overig",
 }
 
+KNOWLEDGE_STATUS_LABELS = {
+    "vertrouwd": "Vertrouwd",
+    "voorgesteld": "Voorgesteld",
+    "verworpen": "Verworpen",
+}
+
 
 def render_knowledge_dashboard(
     repository: SQLiteRepository,
     message: Optional[str] = None,
     error: Optional[str] = None,
+    filters: Optional[dict] = None,
 ) -> str:
-    documents = repository.list_knowledge_documents()
-    counts = _knowledge_scope_counts(documents)
+    active_filters = _knowledge_filter_values(filters or {})
+    all_documents = repository.list_knowledge_documents()
+    documents = filter_knowledge_documents(all_documents, active_filters)
+    counts = _knowledge_scope_counts(all_documents)
     notice = ""
     if error:
         notice = f'<div class="notice">{html.escape(error)}</div>'
@@ -946,7 +969,7 @@ def render_knowledge_dashboard(
       </div>
       <div class="metric">
         <span class="metric-label">Fragmenten</span>
-        <span class="metric-value">{len(documents)}</span>
+        <span class="metric-value">{len(documents)}/{len(all_documents)}</span>
       </div>
       <div class="metric">
         <span class="metric-label">Aandeel</span>
@@ -963,6 +986,7 @@ def render_knowledge_dashboard(
     </section>
     <section>
       <h3>Bibliotheek</h3>
+      {render_knowledge_filter_form(active_filters)}
       {render_knowledge_document_table(documents)}
     </section>"""
 
@@ -971,6 +995,10 @@ def render_knowledge_import_form() -> str:
     source_options = "".join(
         f'<option value="{html.escape(value)}">{html.escape(label)}</option>'
         for value, label in SOURCE_TYPE_LABELS.items()
+    )
+    status_options = "".join(
+        f'<option value="{html.escape(value)}"{" selected" if value == "voorgesteld" else ""}>{html.escape(label)}</option>'
+        for value, label in KNOWLEDGE_STATUS_LABELS.items()
     )
     return f"""
       <form class="knowledge-form" method="post" action="/knowledge/import">
@@ -996,6 +1024,16 @@ def render_knowledge_import_form() -> str:
         </div>
         <div class="form-grid">
           <div>
+            <label for="knowledge-status">Status</label>
+            <select id="knowledge-status" name="status">{status_options}</select>
+          </div>
+          <div>
+            <label for="knowledge-tags">Tags</label>
+            <input id="knowledge-tags" name="tags" type="text" autocomplete="off">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
             <label for="knowledge-scope-type">Scope</label>
             <select id="knowledge-scope-type" name="scope_type">
               <option value="algemeen">Algemeen</option>
@@ -1010,14 +1048,74 @@ def render_knowledge_import_form() -> str:
           </div>
         </div>
         <div>
-          <label for="knowledge-tags">Tags</label>
-          <input id="knowledge-tags" name="tags" type="text" autocomplete="off">
-        </div>
-        <div>
           <label for="knowledge-text">Tekstfragment</label>
           <textarea id="knowledge-text" name="raw_text"></textarea>
         </div>
         <button type="submit">Sla kennisfragment op</button>
+      </form>"""
+
+
+def render_knowledge_filter_form(filters: dict[str, str]) -> str:
+    source_options = _select_options(
+        {"": "Alle bronnen", **SOURCE_TYPE_LABELS},
+        filters.get("source_type", ""),
+    )
+    status_options = _select_options(
+        {"": "Alle statussen", **KNOWLEDGE_STATUS_LABELS},
+        filters.get("status", ""),
+    )
+    scope_options = _select_options(
+        {
+            "": "Alle scopes",
+            "algemeen": "Algemeen",
+            "aandeel": "Aandeel",
+            "sector": "Sector",
+            "thema": "Thema",
+        },
+        filters.get("scope_type", ""),
+    )
+    return f"""
+      <form class="knowledge-form" action="/knowledge" method="get">
+        <div class="form-grid">
+          <div>
+            <label for="knowledge-filter-query">Zoektekst</label>
+            <input id="knowledge-filter-query" name="q" type="text" value="{html.escape(filters.get("q", ""))}" autocomplete="off">
+          </div>
+          <div>
+            <label for="knowledge-filter-status">Status</label>
+            <select id="knowledge-filter-status" name="status">{status_options}</select>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label for="knowledge-filter-source">Bron/type</label>
+            <select id="knowledge-filter-source" name="source_type">{source_options}</select>
+          </div>
+          <div>
+            <label for="knowledge-filter-scope">Scope</label>
+            <select id="knowledge-filter-scope" name="scope_type">{scope_options}</select>
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label for="knowledge-filter-scope-value">Aandeel, sector of thema</label>
+            <input id="knowledge-filter-scope-value" name="scope_value" type="text" value="{html.escape(filters.get("scope_value", ""))}" autocomplete="off">
+          </div>
+          <div>
+            <label for="knowledge-filter-date-from">Vanaf datum</label>
+            <input id="knowledge-filter-date-from" name="date_from" type="date" value="{html.escape(filters.get("date_from", ""))}">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label for="knowledge-filter-date-to">Tot datum</label>
+            <input id="knowledge-filter-date-to" name="date_to" type="date" value="{html.escape(filters.get("date_to", ""))}">
+          </div>
+          <div class="button-row">
+            <button type="submit">Filter</button>
+            <a class="button secondary" href="/knowledge">Wis filters</a>
+          </div>
+        </div>
       </form>"""
 
 
@@ -1028,7 +1126,7 @@ def render_knowledge_document_table(documents: list[KnowledgeDocument]) -> str:
     return f"""
           <table class="data-table">
             <thead>
-              <tr><th>Titel</th><th>Bron</th><th>Scope</th><th>Tags</th><th>Chunks</th><th>Fragment</th></tr>
+              <tr><th>Titel</th><th>Bron</th><th>Scope</th><th>Status</th><th>Tags</th><th>Chunks</th><th>Fragment</th><th>Acties</th></tr>
             </thead>
             <tbody>{rows}</tbody>
           </table>"""
@@ -1046,15 +1144,38 @@ def render_knowledge_document_row(document: KnowledgeDocument) -> str:
     excerpt = document.raw_text[:220].strip()
     if len(document.raw_text) > 220:
         excerpt += "..."
+    status_class = "ok" if document.status == "vertrouwd" else "danger" if document.status == "verworpen" else "warn"
     return f"""
         <tr>
           <td><strong>{html.escape(document.title)}</strong></td>
           <td>{html.escape(source_label)}{date_label}{path_label}</td>
           <td>{html.escape(scope.label)}</td>
+          <td>{render_status_pill(KNOWLEDGE_STATUS_LABELS.get(document.status, document.status), status_class)}</td>
           <td>{html.escape(tag_label)}</td>
           <td>{document.chunk_count}</td>
           <td>{html.escape(excerpt)}</td>
+          <td>{render_knowledge_status_actions(document)}</td>
         </tr>"""
+
+
+def render_knowledge_status_actions(document: KnowledgeDocument) -> str:
+    buttons = []
+    if document.status != "vertrouwd":
+        buttons.append(render_knowledge_status_form(document.document_id, "vertrouwd", "Vertrouw"))
+    if document.status != "voorgesteld":
+        buttons.append(render_knowledge_status_form(document.document_id, "voorgesteld", "Zet op voorstel"))
+    if document.status != "verworpen":
+        buttons.append(render_knowledge_status_form(document.document_id, "verworpen", "Verwerp"))
+    return f'<div class="status-actions">{"".join(buttons)}</div>'
+
+
+def render_knowledge_status_form(document_id: int, status: str, label: str) -> str:
+    return f"""
+              <form method="post" action="/knowledge/status">
+                <input type="hidden" name="document_id" value="{document_id}">
+                <input type="hidden" name="status" value="{html.escape(status)}">
+                <button type="submit">{html.escape(label)}</button>
+              </form>"""
 
 
 def _knowledge_scope_counts(documents: list[KnowledgeDocument]) -> dict[str, int]:
@@ -1063,6 +1184,85 @@ def _knowledge_scope_counts(documents: list[KnowledgeDocument]) -> dict[str, int
         scope = knowledge_scope_from_tags(document.source_type, document.tags)
         counts[scope.kind] = counts.get(scope.kind, 0) + 1
     return counts
+
+
+def _knowledge_filter_values(params: dict) -> dict[str, str]:
+    filters = {
+        "q": _first_param(params, "q"),
+        "source_type": _first_param(params, "source_type"),
+        "status": _first_param(params, "status"),
+        "scope_type": _first_param(params, "scope_type"),
+        "scope_value": _first_param(params, "scope_value"),
+        "date_from": _first_param(params, "date_from"),
+        "date_to": _first_param(params, "date_to"),
+    }
+    if filters["date_from"]:
+        _required_iso_date(filters["date_from"])
+    if filters["date_to"]:
+        _required_iso_date(filters["date_to"])
+    return filters
+
+
+def filter_knowledge_documents(documents: list[KnowledgeDocument], filters: dict[str, str]) -> list[KnowledgeDocument]:
+    result = []
+    query = filters.get("q", "").casefold()
+    scope_type = filters.get("scope_type", "")
+    scope_value = filters.get("scope_value", "")
+    normalized_scope_value = normalize_knowledge_filter_value(scope_value)
+    for document in documents:
+        scope = knowledge_scope_from_tags(document.source_type, document.tags)
+        if filters.get("source_type") and document.source_type != filters["source_type"]:
+            continue
+        if filters.get("status") and document.status != filters["status"]:
+            continue
+        if scope_type and _scope_type_for_filter(scope.kind) != scope_type:
+            continue
+        if normalized_scope_value and normalized_scope_value not in {
+            normalize_knowledge_filter_value(scope.value),
+            normalize_knowledge_filter_value(scope.display_value),
+        }:
+            continue
+        if filters.get("date_from") and (not document.publication_date or document.publication_date < filters["date_from"]):
+            continue
+        if filters.get("date_to") and (not document.publication_date or document.publication_date > filters["date_to"]):
+            continue
+        if query and query not in _knowledge_document_search_text(document, scope).casefold():
+            continue
+        result.append(document)
+    return result
+
+
+def normalize_knowledge_filter_value(value: str) -> str:
+    return "_".join(value.strip().upper().replace(":", " ").split())
+
+
+def _scope_type_for_filter(scope_kind: str) -> str:
+    return {
+        "general": "algemeen",
+        "symbol": "aandeel",
+        "sector": "sector",
+        "theme": "thema",
+    }.get(scope_kind, "")
+
+
+def _knowledge_document_search_text(document: KnowledgeDocument, scope) -> str:
+    return " ".join(
+        [
+            document.title,
+            document.source_type,
+            document.publication_date or "",
+            scope.label,
+            " ".join(document.tags),
+            document.raw_text,
+        ]
+    )
+
+
+def _select_options(options: dict[str, str], selected: str) -> str:
+    return "".join(
+        f'<option value="{html.escape(value)}"{" selected" if value == selected else ""}>{html.escape(label)}</option>'
+        for value, label in options.items()
+    )
 
 
 def render_v1_status_dashboard(
@@ -1864,11 +2064,14 @@ def save_knowledge_document_workflow(repository: SQLiteRepository, params: dict)
     scope_type = _first_param(params, "scope_type") or "algemeen"
     scope_value = _first_param(params, "scope_value")
     extra_tags = _first_param(params, "tags")
+    status = _first_param(params, "status") or "voorgesteld"
 
     if not title:
         raise ValueError("Titel is verplicht.")
     if not raw_text:
         raise ValueError("Tekstfragment is verplicht.")
+    if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
+        raise ValueError("Onbekende kennisstatus.")
     if publication_date:
         _required_iso_date(publication_date)
     tags = build_knowledge_tags(scope_type, scope_value, extra_tags)
@@ -1880,8 +2083,20 @@ def save_knowledge_document_workflow(repository: SQLiteRepository, params: dict)
         publication_date=publication_date,
         source_path=source_path,
         tags=tags,
+        status=status,
     )
     return f"Kennisfragment opgeslagen: {title} (document {document_id})."
+
+
+def update_knowledge_document_status_workflow(repository: SQLiteRepository, params: dict) -> str:
+    document_id = _parse_required_int(_first_param(params, "document_id"), "document")
+    status = _first_param(params, "status")
+    if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
+        raise ValueError("Onbekende kennisstatus.")
+    updated = repository.update_knowledge_document_status(document_id, status)
+    if not updated:
+        raise ValueError("Kennisfragment is niet gevonden.")
+    return f"Kennisfragment {document_id} is {KNOWLEDGE_STATUS_LABELS[status].lower()}."
 
 
 def update_peer_candidate_status_workflow(repository: SQLiteRepository, params: dict) -> str:
@@ -2145,6 +2360,13 @@ def _looks_like_dutch_thousands(value: str) -> bool:
 
 def _parse_required_float(value: str, label: str) -> float:
     parsed = _parse_optional_float(value, label)
+    if parsed is None:
+        raise ValueError(f"{label} is verplicht.")
+    return parsed
+
+
+def _parse_required_int(value: str, label: str) -> int:
+    parsed = _parse_optional_int(value, label)
     if parsed is None:
         raise ValueError(f"{label} is verplicht.")
     return parsed

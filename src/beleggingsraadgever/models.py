@@ -199,7 +199,9 @@ class KnowledgeDocument:
     source_path: Optional[str] = None
     tags: List[str] = field(default_factory=list)
     chunk_count: int = 0
+    status: str = "vertrouwd"
     created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 @dataclass(frozen=True)

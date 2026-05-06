@@ -397,11 +397,20 @@ class WebTests(unittest.TestCase):
             documents = repo.list_knowledge_documents()
             self.assertEqual(len(documents), 1)
             self.assertEqual(documents[0].tags[:2], ["APERAM", "scope:aandeel"])
+            self.assertEqual(documents[0].status, "voorgesteld")
             html = build_knowledge_page(repo)
             self.assertIn("Kennisbibliotheek", html)
             self.assertIn("Aperam dividend", html)
             self.assertIn("Aandeel: APERAM", html)
+            self.assertIn("Voorgesteld", html)
+            self.assertIn("Vertrouw", html)
             self.assertIn("Dividend moet uit vrije kasstroom", html)
+
+            repo.update_knowledge_document_status(documents[0].document_id, "vertrouwd")
+            trusted_html = build_knowledge_page(repo, filters={"status": ["vertrouwd"], "scope_type": ["aandeel"]})
+            rejected_html = build_knowledge_page(repo, filters={"status": ["verworpen"]})
+            self.assertIn("Aperam dividend", trusted_html)
+            self.assertNotIn("Aperam dividend", rejected_html)
 
     def test_status_page_renders_v1_control_panel(self) -> None:
         import tempfile

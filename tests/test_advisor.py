@@ -228,6 +228,46 @@ class AdvisorTests(unittest.TestCase):
             self.assertIn("Semiconductor margin principle", evidence_titles)
             self.assertNotIn("Construction margin principle", evidence_titles)
 
+    def test_untrusted_knowledge_is_not_used_as_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            proposed_id = repo.add_document(
+                title="Voorgesteld dividendprincipe",
+                source_type="educatie",
+                raw_text="Voorgesteld: dividend moet worden ondersteund door vrije kasstroom, schuld en marge.",
+                tags=["dividend"],
+                status="voorgesteld",
+            )
+            rejected_id = repo.add_document(
+                title="Verworpen dividendprincipe",
+                source_type="educatie",
+                raw_text="Verworpen: dividend moet worden ondersteund door vrije kasstroom, schuld en marge.",
+                tags=["verworpen"],
+                status="verworpen",
+            )
+            trusted_id = repo.add_document(
+                title="Vertrouwd dividendprincipe",
+                source_type="educatie",
+                raw_text="Vertrouwd: dividend moet worden ondersteund door vrije kasstroom, schuld en marge.",
+                tags=["vertrouwd"],
+                status="vertrouwd",
+            )
+
+            report = Advisor(repo).analyze_snapshots(
+                "BESI",
+                FinancialSnapshot(symbol="BESI", period_end="2025-12-31", period_type="TTM", revenue=1_000_000_000),
+                MarketSnapshot(symbol="BESI", as_of="2026-05-06", close_price=130, currency="EUR", dividend_yield=0.05),
+            )
+
+            evidence_titles = [hit.title for hit in report.evidence]
+            self.assertNotIn("Voorgesteld dividendprincipe", evidence_titles)
+            self.assertNotIn("Verworpen dividendprincipe", evidence_titles)
+            self.assertIn("Vertrouwd dividendprincipe", evidence_titles)
+            self.assertTrue(repo.update_knowledge_document_status(proposed_id, "vertrouwd"))
+            self.assertTrue(repo.update_knowledge_document_status(rejected_id, "voorgesteld"))
+            self.assertTrue(repo.update_knowledge_document_status(trusted_id, "verworpen"))
+
     def test_peer_analysis_compares_against_available_peer_snapshots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")
