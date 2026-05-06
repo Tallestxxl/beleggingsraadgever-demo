@@ -654,6 +654,7 @@ def _make_handler(repository: SQLiteRepository):
                 "/portfolio/profile",
                 "/portfolio/position",
                 "/status/refresh-peers",
+                "/status/peer-status",
             }:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
@@ -676,6 +677,15 @@ def _make_handler(repository: SQLiteRepository):
                 self._redirect(
                     f"/status?message={quote_plus(f'Peer-kandidaten voor {symbol} herberekend: {len(candidates)}')}"
                 )
+                return
+
+            if parsed.path == "/status/peer-status":
+                try:
+                    message = update_peer_candidate_status_workflow(repository, params)
+                except ValueError as error:
+                    self._redirect(f"/status?message={quote_plus(str(error))}")
+                    return
+                self._redirect(f"/status?message={quote_plus(message)}")
                 return
 
             if parsed.path == "/portfolio/profile":
@@ -924,6 +934,11 @@ def render_v1_status_dashboard(
         </form>
       </div>
       {render_v1_status_table(rows)}
+    </section>
+    <section>
+      <h3>Peer-kandidaten beoordelen</h3>
+      <p class="summary">Promoveer voorgestelde peers pas naar vertrouwd wanneer ze inhoudelijk vergelijkbaar genoeg zijn. Vertrouwde peers tellen mee voor V1-status en peeranalyse; voorgestelde peers blijven alleen op de kandidatenlijst staan.</p>
+      {render_peer_candidate_review_table(repository, symbols)}
     </section>"""
 
 
@@ -978,6 +993,61 @@ def render_v1_status_actions(symbol: str) -> str:
 
 def render_status_pill(label: str, status_class: str) -> str:
     return f'<span class="status-pill status-{html.escape(status_class)}">{html.escape(label)}</span>'
+
+
+def render_peer_candidate_review_table(repository: SQLiteRepository, symbols: list[str]) -> str:
+    grouped = repository.peer_candidates_for_symbols(symbols)
+    candidates = [
+        candidate
+        for symbol in symbols
+        for candidate in grouped.get(symbol.upper(), [])
+    ]
+    if not candidates:
+        return '<p class="evidence-meta">Nog geen peer-kandidaten gevonden. Gebruik eerst Zoek peer-kandidaten of Herbereken alle peer-kandidaten.</p>'
+    body = "".join(render_peer_candidate_review_row(candidate) for candidate in candidates)
+    return f"""
+          <table class="data-table">
+            <thead>
+              <tr><th>Aandeel</th><th>Kandidaat</th><th>Peer-groep</th><th>Status</th><th>Bron</th><th>Confidence</th><th>Reden</th><th>Acties</th></tr>
+            </thead>
+            <tbody>{body}</tbody>
+          </table>"""
+
+
+def render_peer_candidate_review_row(candidate) -> str:
+    status_class = "ok" if candidate.status == "vertrouwd" else "danger" if candidate.status == "verworpen" else "warn"
+    return f"""
+        <tr>
+          <td>{html.escape(candidate.symbol)}</td>
+          <td><strong>{html.escape(candidate.peer_symbol)}</strong></td>
+          <td>{html.escape(candidate.peer_group)}</td>
+          <td>{render_status_pill(candidate.status, status_class)}</td>
+          <td>{html.escape(candidate.source)}</td>
+          <td>{candidate.confidence:.0%}</td>
+          <td>{html.escape(candidate.reason)}</td>
+          <td>{render_peer_candidate_status_actions(candidate)}</td>
+        </tr>"""
+
+
+def render_peer_candidate_status_actions(candidate) -> str:
+    buttons = []
+    if candidate.status != "vertrouwd":
+        buttons.append(render_peer_status_form(candidate.symbol, candidate.peer_symbol, "vertrouwd", "Vertrouw"))
+    if candidate.status != "verworpen":
+        buttons.append(render_peer_status_form(candidate.symbol, candidate.peer_symbol, "verworpen", "Verwerp"))
+    if candidate.status == "verworpen":
+        buttons.append(render_peer_status_form(candidate.symbol, candidate.peer_symbol, "voorgesteld", "Zet terug als voorstel"))
+    return f'<div class="status-actions">{"".join(buttons)}</div>'
+
+
+def render_peer_status_form(symbol: str, peer_symbol: str, status: str, label: str) -> str:
+    return f"""
+              <form method="post" action="/status/peer-status">
+                <input type="hidden" name="symbol" value="{html.escape(symbol)}">
+                <input type="hidden" name="peer_symbol" value="{html.escape(peer_symbol)}">
+                <input type="hidden" name="status" value="{html.escape(status)}">
+                <button type="submit">{html.escape(label)}</button>
+              </form>"""
 
 
 def build_v1_status_row(repository: SQLiteRepository, symbol: str) -> V1StatusRow:
@@ -1604,6 +1674,25 @@ def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) ->
         raise ValueError("CSV-pad is verplicht.")
     result = import_portfolio_csv(repository, Path(csv_path))
     return result.summary
+
+
+def update_peer_candidate_status_workflow(repository: SQLiteRepository, params: dict) -> str:
+    symbol = _first_param(params, "symbol").upper()
+    peer_symbol = _first_param(params, "peer_symbol").upper()
+    status = _first_param(params, "status")
+    if not symbol or not peer_symbol:
+        raise ValueError("Aandeel en peer-kandidaat zijn verplicht.")
+    if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
+        raise ValueError("Onbekende peerstatus.")
+    updated = repository.update_peer_candidate_status(symbol, peer_symbol, status)
+    if not updated:
+        raise ValueError(f"Peer-kandidaat {peer_symbol} voor {symbol} is niet gevonden.")
+    labels = {
+        "vertrouwd": "vertrouwd",
+        "voorgesteld": "teruggezet als voorstel",
+        "verworpen": "verworpen",
+    }
+    return f"Peer-kandidaat {peer_symbol} voor {symbol} is {labels[status]}."
 
 
 def portfolio_position_rows(

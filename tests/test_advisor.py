@@ -382,6 +382,24 @@ class AdvisorTests(unittest.TestCase):
             self.assertEqual(statuses["HEIJMANS"], "voorgesteld")
             self.assertNotIn("BAMNB", peer_symbols)
 
+            self.assertTrue(repo.update_peer_candidate_status("BAMNB", "HEIJMANS", "vertrouwd"))
+            refresh_peer_candidates(repo, "BAMNB")
+            trusted = {
+                candidate.peer_symbol: candidate
+                for candidate in repo.peer_candidates_for_symbol("BAMNB")
+            }
+            self.assertEqual(trusted["HEIJMANS"].status, "vertrouwd")
+            self.assertEqual(trusted["HEIJMANS"].source, "user_approved")
+
+            self.assertTrue(repo.update_peer_candidate_status("BAMNB", "HEIJMANS", "verworpen"))
+            refresh_peer_candidates(repo, "BAMNB")
+            rejected = {
+                candidate.peer_symbol: candidate
+                for candidate in repo.peer_candidates_for_symbol("BAMNB")
+            }
+            self.assertEqual(rejected["HEIJMANS"].status, "verworpen")
+            self.assertEqual(rejected["HEIJMANS"].source, "user_rejected")
+
     def test_peer_analysis_rejects_alias_and_wrong_curated_group_even_with_stale_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")

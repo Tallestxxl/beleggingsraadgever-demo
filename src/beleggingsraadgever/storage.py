@@ -1234,8 +1234,37 @@ class SQLiteRepository:
     def replace_peer_candidates(self, symbol: str, candidates: Iterable[PeerCandidate]) -> None:
         normalized_symbol = symbol.upper()
         with self.connect() as conn:
+            existing_rows = conn.execute(
+                """
+                SELECT symbol, peer_symbol, peer_group, source, confidence, reason, status
+                FROM peer_candidates
+                WHERE symbol = ?
+                """,
+                (normalized_symbol,),
+            ).fetchall()
+            existing_by_peer = {row["peer_symbol"]: row for row in existing_rows}
             conn.execute("DELETE FROM peer_candidates WHERE symbol = ?", (normalized_symbol,))
+            preserved_rows = [
+                row
+                for row in existing_rows
+                if row["status"] == "verworpen" or row["source"] == "user_approved"
+            ]
+            seen_peers = set()
             for candidate in candidates:
+                peer_symbol = candidate.peer_symbol.upper()
+                existing = existing_by_peer.get(peer_symbol)
+                seen_peers.add(peer_symbol)
+                status = candidate.status
+                source = candidate.source
+                confidence = candidate.confidence
+                reason = candidate.reason
+                if existing is not None and existing["status"] == "verworpen":
+                    continue
+                if existing is not None and existing["status"] == "vertrouwd":
+                    status = "vertrouwd"
+                    source = existing["source"] or "user_approved"
+                    confidence = max(float(existing["confidence"]), candidate.confidence)
+                    reason = existing["reason"] or "Door gebruiker vertrouwd."
                 conn.execute(
                     """
                     INSERT INTO peer_candidates
@@ -1251,14 +1280,94 @@ class SQLiteRepository:
                     """,
                     (
                         normalized_symbol,
-                        candidate.peer_symbol.upper(),
+                        peer_symbol,
                         candidate.peer_group,
-                        candidate.source,
-                        candidate.confidence,
-                        candidate.reason,
-                        candidate.status,
+                        source,
+                        confidence,
+                        reason,
+                        status,
                     ),
                 )
+            for row in preserved_rows:
+                if row["peer_symbol"] in seen_peers and row["status"] != "verworpen":
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO peer_candidates
+                      (symbol, peer_symbol, peer_group, source, confidence, reason, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, peer_symbol) DO UPDATE SET
+                      peer_group=excluded.peer_group,
+                      source=excluded.source,
+                      confidence=excluded.confidence,
+                      reason=excluded.reason,
+                      status=excluded.status,
+                      updated_at=CURRENT_TIMESTAMP
+                    """,
+                    (
+                        row["symbol"],
+                        row["peer_symbol"],
+                        row["peer_group"],
+                        row["source"],
+                        row["confidence"],
+                        row["reason"],
+                        row["status"],
+                    ),
+                )
+
+    def update_peer_candidate_status(
+        self,
+        symbol: str,
+        peer_symbol: str,
+        status: str,
+        reason: str = "",
+    ) -> bool:
+        if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
+            raise ValueError("Onbekende peerstatus.")
+        normalized_symbol = symbol.upper()
+        normalized_peer = peer_symbol.upper()
+        if status == "vertrouwd":
+            source = "user_approved"
+        elif status == "verworpen":
+            source = "user_rejected"
+        else:
+            source = "user_review"
+        default_reasons = {
+            "vertrouwd": "Door gebruiker vertrouwd.",
+            "voorgesteld": "Door gebruiker teruggezet als voorstel.",
+            "verworpen": "Door gebruiker verworpen.",
+        }
+        with self.connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT symbol, peer_symbol, peer_group, source, confidence, reason, status
+                FROM peer_candidates
+                WHERE symbol = ? AND peer_symbol = ?
+                """,
+                (normalized_symbol, normalized_peer),
+            ).fetchone()
+            if existing is None:
+                return False
+            conn.execute(
+                """
+                UPDATE peer_candidates
+                SET status = ?,
+                    source = ?,
+                    confidence = CASE WHEN ? = 'vertrouwd' THEN MAX(confidence, 0.90) ELSE confidence END,
+                    reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE symbol = ? AND peer_symbol = ?
+                """,
+                (
+                    status,
+                    source,
+                    status,
+                    reason or default_reasons[status],
+                    normalized_symbol,
+                    normalized_peer,
+                ),
+            )
+            return True
 
     def peer_candidates_for_symbol(self, symbol: str) -> List[PeerCandidate]:
         with self.connect() as conn:
