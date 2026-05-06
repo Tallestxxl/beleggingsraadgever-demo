@@ -308,6 +308,11 @@ button:disabled {
   gap: 18px;
 }
 
+.portfolio-wide-section {
+  margin-top: 18px;
+  overflow-x: auto;
+}
+
 section {
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -834,15 +839,15 @@ def render_portfolio_dashboard(
           {render_position_form()}
         </section>
         <section>
-          <h3>Effectenportefeuille</h3>
-          {render_positions_table(positions)}
-        </section>
-        <section>
           <h3>Identiteitskoppelingen</h3>
           {render_aliases_table(aliases)}
         </section>
       </div>
-    </div>"""
+    </div>
+    <section class="portfolio-wide-section">
+      <h3>Effectenportefeuille</h3>
+      {render_positions_table(positions)}
+    </section>"""
 
 
 def render_csv_import_form() -> str:

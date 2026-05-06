@@ -353,6 +353,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("Profiel & portefeuille", html)
             self.assertIn("CSV-import", html)
             self.assertIn("Effectenportefeuille", html)
+            self.assertIn('class="portfolio-wide-section"', html)
             self.assertIn("Sectorverdeling effecten", html)
             self.assertIn("Peerdekking", html)
             self.assertIn("% effecten", html)
