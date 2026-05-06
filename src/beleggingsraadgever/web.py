@@ -885,7 +885,7 @@ def render_profile_form(profile: Optional[InvestorProfile], assets: list[Portfol
         f"""
               <div>
                 <label for="asset-{html.escape(asset_type)}">{html.escape(label)}</label>
-                <input id="asset-{html.escape(asset_type)}" name="asset_{html.escape(asset_type)}" type="number" step="0.01" min="0" value="{format_input_number(asset_values.get(asset_type))}">
+                <input id="asset-{html.escape(asset_type)}" name="asset_{html.escape(asset_type)}" type="text" inputmode="decimal" value="{format_money_input_number(asset_values.get(asset_type))}">
               </div>"""
         for asset_type, label in ASSET_LABELS.items()
     )
@@ -898,7 +898,7 @@ def render_profile_form(profile: Optional[InvestorProfile], assets: list[Portfol
               </div>
               <div>
                 <label for="annual-income">Bruto jaarinkomen</label>
-                <input id="annual-income" name="annual_income" type="number" min="0" step="100" value="{format_input_number(profile.annual_income if profile else None)}">
+                <input id="annual-income" name="annual_income" type="text" inputmode="decimal" value="{format_money_input_number(profile.annual_income if profile else None)}">
               </div>
             </div>
             <div class="form-grid">
@@ -908,7 +908,7 @@ def render_profile_form(profile: Optional[InvestorProfile], assets: list[Portfol
               </div>
               <div>
                 <label for="cash-buffer">Gewenste cashbuffer</label>
-                <input id="cash-buffer" name="cash_buffer" type="number" min="0" step="100" value="{format_input_number(profile.cash_buffer if profile else None)}">
+                <input id="cash-buffer" name="cash_buffer" type="text" inputmode="decimal" value="{format_money_input_number(profile.cash_buffer if profile else None)}">
               </div>
             </div>
             <div>
@@ -1264,6 +1264,13 @@ def format_input_number(value: Optional[float]) -> str:
     return str(value)
 
 
+def format_money_input_number(value: Optional[float]) -> str:
+    if value is None:
+        return ""
+    decimals = 0 if float(value).is_integer() else 2
+    return format_dutch_number(value, decimals=decimals)
+
+
 def ensure_snapshot_workflow(
     symbol: str,
     drafts_dir: Path = DRAFTS_DIR,
@@ -1396,13 +1403,32 @@ def _first_param(params: dict, name: str) -> str:
 def _parse_optional_float(value: str, label: str) -> Optional[float]:
     if not value:
         return None
+    normalized = _normalize_localized_number(value)
     try:
-        parsed = float(value.replace(",", "."))
+        parsed = float(normalized)
     except ValueError as error:
         raise ValueError(f"{label} moet een getal zijn.") from error
     if parsed < 0:
         raise ValueError(f"{label} mag niet negatief zijn.")
     return parsed
+
+
+def _normalize_localized_number(value: str) -> str:
+    text = value.strip().replace(" ", "")
+    if "," in text:
+        return text.replace(".", "").replace(",", ".")
+    if "." in text and _looks_like_dutch_thousands(text):
+        return text.replace(".", "")
+    return text
+
+
+def _looks_like_dutch_thousands(value: str) -> bool:
+    parts = value.split(".")
+    return (
+        len(parts) > 1
+        and 1 <= len(parts[0]) <= 3
+        and all(part.isdigit() and len(part) == 3 for part in parts[1:])
+    )
 
 
 def _parse_required_float(value: str, label: str) -> float:

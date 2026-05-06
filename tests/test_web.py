@@ -325,14 +325,14 @@ class WebTests(unittest.TestCase):
                 repo,
                 {
                     "age": ["52"],
-                    "annual_income": ["90000"],
+                    "annual_income": ["90.000"],
                     "horizon_years": ["12"],
-                    "cash_buffer": ["25000"],
+                    "cash_buffer": ["25.000"],
                     "risk_profile": ["gebalanceerd"],
-                    "asset_cash": ["25000"],
-                    "asset_house": ["500000"],
-                    "asset_gold": ["10000"],
-                    "asset_bitcoin": ["15000"],
+                    "asset_cash": ["25.000"],
+                    "asset_house": ["500.000"],
+                    "asset_gold": ["10.000"],
+                    "asset_bitcoin": ["15.000"],
                     "asset_other": [""],
                 },
             )
@@ -349,7 +349,11 @@ class WebTests(unittest.TestCase):
             )
 
             html = build_portfolio_page(repo)
+            profile = repo.investor_profile()
 
+            self.assertIsNotNone(profile)
+            self.assertEqual(profile.annual_income, 90000)
+            self.assertEqual(profile.cash_buffer, 25000)
             self.assertIn("Profiel & portefeuille", html)
             self.assertIn("CSV-import", html)
             self.assertIn("Effectenportefeuille", html)
@@ -361,6 +365,9 @@ class WebTests(unittest.TestCase):
             self.assertNotIn("% totaal", html)
             self.assertIn("DEMO", html)
             self.assertIn("EUR 550.000", html)
+            self.assertIn('name="annual_income" type="text" inputmode="decimal" value="90.000"', html)
+            self.assertIn('name="cash_buffer" type="text" inputmode="decimal" value="25.000"', html)
+            self.assertIn('name="asset_house" type="text" inputmode="decimal" value="500.000"', html)
 
     def test_portfolio_csv_workflow_imports_file_path(self) -> None:
         import tempfile
