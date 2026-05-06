@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import os
 import sys
 import unittest
 
@@ -468,6 +469,41 @@ class WebTests(unittest.TestCase):
             document = repo.list_knowledge_documents()[0]
             self.assertEqual(document.title, "Digitale PDF")
             self.assertIn("PDF dividend en vrije kasstroom", document.raw_text)
+
+    def test_knowledge_import_reads_image_with_tesseract_adapter(self) -> None:
+        import tempfile
+
+        old_tesseract = os.environ.get("BELEGGINGSRAADGEVER_TESSERACT")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+                repo.init()
+                image_path = Path(tmp) / "scan.png"
+                image_path.write_bytes(b"fake image")
+                fake_tesseract = Path(tmp) / "fake-tesseract"
+                fake_tesseract.write_text("#!/bin/sh\nprintf 'OCR dividend en vrije kasstroom\\n'\n", encoding="utf-8")
+                fake_tesseract.chmod(0o755)
+                os.environ["BELEGGINGSRAADGEVER_TESSERACT"] = str(fake_tesseract)
+
+                save_knowledge_document_workflow(
+                    repo,
+                    {
+                        "title": ["OCR scan"],
+                        "source_type": ["beleggers_belangen"],
+                        "publication_date": ["2026-05-06"],
+                        "scope_type": ["algemeen"],
+                        "file_path": [str(image_path)],
+                    },
+                )
+
+                document = repo.list_knowledge_documents()[0]
+                self.assertEqual(document.title, "OCR scan")
+                self.assertIn("OCR dividend en vrije kasstroom", document.raw_text)
+        finally:
+            if old_tesseract is None:
+                os.environ.pop("BELEGGINGSRAADGEVER_TESSERACT", None)
+            else:
+                os.environ["BELEGGINGSRAADGEVER_TESSERACT"] = old_tesseract
 
     def test_status_page_renders_v1_control_panel(self) -> None:
         import tempfile

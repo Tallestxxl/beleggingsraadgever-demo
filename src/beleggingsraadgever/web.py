@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, quote_plus, urlparse
 
 from .advisor import Advisor
 from .collector import collect_snapshot_data
-from .document_text import extract_text_from_file
+from .document_text import extract_text_from_file, ocr_engine_status
 from .formatting import format_currency, format_dutch_number
 from .importer import (
     SnapshotValidationError,
@@ -1024,8 +1024,9 @@ def render_knowledge_import_form() -> str:
           </div>
         </div>
         <div>
-          <label for="knowledge-file-path">Bestandspad (.txt, .md, digitale .pdf)</label>
+          <label for="knowledge-file-path">Bestandspad (.txt, .md, .pdf, afbeelding)</label>
           <input id="knowledge-file-path" name="file_path" type="text" autocomplete="off">
+          <p class="evidence-meta">{html.escape(ocr_engine_status())}</p>
         </div>
         <div class="form-grid">
           <div>

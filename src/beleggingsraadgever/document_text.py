@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import re
+import os
+import shutil
+import subprocess
+import tempfile
 import zlib
 from pathlib import Path
 
 
 SUPPORTED_TEXT_SUFFIXES = {".txt", ".md", ".markdown"}
-SUPPORTED_FILE_SUFFIXES = SUPPORTED_TEXT_SUFFIXES | {".pdf"}
+SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+SUPPORTED_FILE_SUFFIXES = SUPPORTED_TEXT_SUFFIXES | {".pdf"} | SUPPORTED_IMAGE_SUFFIXES
+OCR_LANGUAGE = "nld+eng"
 
 
 def extract_text_from_file(path: Path) -> str:
@@ -21,8 +27,23 @@ def extract_text_from_file(path: Path) -> str:
     if suffix in SUPPORTED_TEXT_SUFFIXES:
         return _read_text_file(file_path)
     if suffix == ".pdf":
-        return extract_text_from_pdf(file_path.read_bytes())
-    raise ValueError("Ondersteunde bestandsformaten zijn .txt, .md en digitale .pdf.")
+        try:
+            return extract_text_from_pdf(file_path.read_bytes())
+        except ValueError:
+            return _ocr_pdf(file_path)
+    if suffix in SUPPORTED_IMAGE_SUFFIXES:
+        return _ocr_image(file_path)
+    raise ValueError("Ondersteunde bestandsformaten zijn .txt, .md, digitale .pdf en OCR-afbeeldingen.")
+
+
+def ocr_engine_status() -> str:
+    ocrmypdf = _tool_path("ocrmypdf", "BELEGGINGSRAADGEVER_OCRMYPDF")
+    tesseract = _tool_path("tesseract", "BELEGGINGSRAADGEVER_TESSERACT")
+    if ocrmypdf:
+        return "OCR beschikbaar voor gescande PDF's via OCRmyPDF."
+    if tesseract:
+        return "OCR beschikbaar voor losse afbeeldingen via Tesseract; gescande PDF's vragen OCRmyPDF."
+    return "OCR-engine ontbreekt: installeer OCRmyPDF voor gescande PDF's of Tesseract voor losse afbeeldingen."
 
 
 def extract_text_from_pdf(data: bytes) -> str:
@@ -47,6 +68,64 @@ def _read_text_file(path: Path) -> str:
         except UnicodeDecodeError:
             continue
     raise ValueError("Tekstbestand kon niet worden gelezen.")
+
+
+def _ocr_pdf(path: Path) -> str:
+    ocrmypdf = _tool_path("ocrmypdf", "BELEGGINGSRAADGEVER_OCRMYPDF")
+    if not ocrmypdf:
+        raise ValueError(
+            "Geen tekst gevonden in PDF. Voor gescande PDF's is OCRmyPDF nodig; "
+            "digitale PDF's blijven zonder OCR werken."
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        sidecar = Path(tmp) / "ocr.txt"
+        output_pdf = Path(tmp) / "ocr.pdf"
+        command = [
+            ocrmypdf,
+            "--skip-text",
+            "-l",
+            OCR_LANGUAGE,
+            "--sidecar",
+            str(sidecar),
+            str(path),
+            str(output_pdf),
+        ]
+        result = subprocess.run(command, text=True, capture_output=True, timeout=240)
+        if result.returncode != 0:
+            raise ValueError(_ocr_error("OCRmyPDF", result.stderr))
+        text = sidecar.read_text(encoding="utf-8", errors="ignore").strip() if sidecar.exists() else ""
+        if not text:
+            raise ValueError("OCRmyPDF heeft geen tekst uit de PDF gehaald.")
+        return text
+
+
+def _ocr_image(path: Path) -> str:
+    tesseract = _tool_path("tesseract", "BELEGGINGSRAADGEVER_TESSERACT")
+    if not tesseract:
+        raise ValueError("OCR voor afbeeldingen vereist Tesseract.")
+    attempts = [
+        [tesseract, str(path), "stdout", "-l", OCR_LANGUAGE],
+        [tesseract, str(path), "stdout"],
+    ]
+    last_error = ""
+    for command in attempts:
+        result = subprocess.run(command, text=True, capture_output=True, timeout=120)
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        last_error = result.stderr
+    raise ValueError(_ocr_error("Tesseract", last_error))
+
+
+def _tool_path(name: str, env_var: str) -> str | None:
+    override = os.environ.get(env_var, "").strip()
+    if override:
+        return override
+    return shutil.which(name)
+
+
+def _ocr_error(tool_name: str, stderr: str) -> str:
+    detail = stderr.strip().splitlines()[-1] if stderr.strip() else "geen tekst gevonden"
+    return f"{tool_name} kon geen OCR-tekst maken: {detail}"
 
 
 def _pdf_streams(data: bytes) -> list[bytes]:
