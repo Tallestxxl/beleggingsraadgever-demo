@@ -313,6 +313,10 @@ button:disabled {
   overflow-x: auto;
 }
 
+.collapsible-content {
+  margin-top: 12px;
+}
+
 section {
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -825,8 +829,10 @@ def render_portfolio_dashboard(
           {render_exposure_table(exposure_buckets(exposures, by="theme", total_wealth=total_value))}
         </section>
         <section>
-          <h3>Peerdekking</h3>
-          {render_peer_coverage_table(peer_coverage)}
+          <details class="supporting-detail">
+            <summary>Peerdekking</summary>
+            <div class="collapsible-content">{render_peer_coverage_table(peer_coverage)}</div>
+          </details>
         </section>
       </div>
       <div>
@@ -839,8 +845,10 @@ def render_portfolio_dashboard(
           {render_position_form()}
         </section>
         <section>
-          <h3>Identiteitskoppelingen</h3>
-          {render_aliases_table(aliases)}
+          <details class="supporting-detail">
+            <summary>Identiteitskoppelingen</summary>
+            <div class="collapsible-content">{render_aliases_table(aliases)}</div>
+          </details>
         </section>
       </div>
     </div>
