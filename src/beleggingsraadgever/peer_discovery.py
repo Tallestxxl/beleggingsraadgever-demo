@@ -39,6 +39,7 @@ def discover_peer_candidates(repository: SQLiteRepository, symbol: str) -> list[
             source="curated_symbol",
             confidence=0.95,
             reason="Handmatig onderhouden peer-set voor dit aandeel.",
+            status="vertrouwd",
         )
 
     for peer_symbol in PEERS_BY_THEME.get(peer_group, []):
@@ -49,8 +50,9 @@ def discover_peer_candidates(repository: SQLiteRepository, symbol: str) -> list[
             peer_symbol,
             peer_group,
             source="curated_theme",
-            confidence=0.88,
-            reason=f"Zelfde peer-groep/thema: {peer_group}.",
+            confidence=0.62,
+            reason=f"Voorgesteld vanuit brede peer-discovery voor thema {peer_group}; nog handmatig controleren.",
+            status="voorgesteld",
             allow_theme_list=True,
         )
 
@@ -66,6 +68,7 @@ def discover_peer_candidates(repository: SQLiteRepository, symbol: str) -> list[
             source="known_classification",
             confidence=0.78,
             reason=f"Bekende lokale classificatie met hetzelfde thema: {peer_group}.",
+            status="vertrouwd",
         )
 
     local_snapshot_symbols = set(repository.symbols_with_snapshots())
@@ -83,6 +86,7 @@ def discover_peer_candidates(repository: SQLiteRepository, symbol: str) -> list[
             source="local_snapshot_classification",
             confidence=0.72,
             reason=f"Lokaal analyseerbaar aandeel met hetzelfde thema: {peer_group}.",
+            status="vertrouwd",
         )
 
     return sorted(candidates.values(), key=lambda candidate: (-candidate.confidence, candidate.peer_symbol))
@@ -98,6 +102,7 @@ def _add_candidate(
     source: str,
     confidence: float,
     reason: str,
+    status: str,
     allow_theme_list: bool = False,
 ) -> None:
     normalized_peer = peer_symbol.strip().upper()
@@ -114,6 +119,7 @@ def _add_candidate(
         source=source,
         confidence=confidence,
         reason=reason,
+        status=status,
     )
     existing = candidates.get(normalized_peer)
     if existing is None or candidate.confidence > existing.confidence:

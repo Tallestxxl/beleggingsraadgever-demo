@@ -120,6 +120,8 @@ def _peer_symbols(
     seen = {symbol}
 
     for candidate in repository.peer_candidates_for_symbol(symbol):
+        if candidate.status != "vertrouwd":
+            continue
         if candidate.peer_group == peer_group and _same_peer_group(repository, candidate.peer_symbol, peer_group):
             _add_peer_candidate(repository, symbol, peers, seen, candidate.peer_symbol)
 
@@ -127,9 +129,6 @@ def _peer_symbols(
         normalized_candidate = candidate.strip().upper()
         if _same_peer_group(repository, normalized_candidate, peer_group):
             _add_peer_candidate(repository, symbol, peers, seen, normalized_candidate)
-
-    for candidate in PEERS_BY_THEME.get(peer_group, []):
-        _add_peer_candidate(repository, symbol, peers, seen, candidate.strip().upper())
 
     return peers
 

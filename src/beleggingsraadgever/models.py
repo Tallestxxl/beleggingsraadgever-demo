@@ -260,6 +260,7 @@ class PeerCandidate:
     source: str
     confidence: float
     reason: str = ""
+    status: str = "vertrouwd"
 
 
 @dataclass(frozen=True)

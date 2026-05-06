@@ -374,10 +374,12 @@ class AdvisorTests(unittest.TestCase):
             candidates = refresh_peer_candidates(repo, "BAMNB")
             peer_symbols = {candidate.peer_symbol for candidate in candidates}
             sources = {candidate.source for candidate in candidates}
+            statuses = {candidate.peer_symbol: candidate.status for candidate in candidates}
 
             self.assertIn("HEIJMANS", peer_symbols)
             self.assertIn("VINCI", peer_symbols)
             self.assertIn("curated_theme", sources)
+            self.assertEqual(statuses["HEIJMANS"], "voorgesteld")
             self.assertNotIn("BAMNB", peer_symbols)
 
     def test_peer_analysis_rejects_alias_and_wrong_curated_group_even_with_stale_data(self) -> None:

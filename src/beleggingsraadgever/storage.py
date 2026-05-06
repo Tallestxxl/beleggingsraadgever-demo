@@ -261,6 +261,7 @@ CREATE TABLE IF NOT EXISTS peer_candidates (
   source TEXT NOT NULL,
   confidence REAL NOT NULL DEFAULT 0,
   reason TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'vertrouwd',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(symbol, peer_symbol)
@@ -283,7 +284,13 @@ class SQLiteRepository:
     def init(self) -> None:
         with self.connect() as conn:
             conn.executescript(SCHEMA)
+            self._ensure_column(conn, "peer_candidates", "status", "TEXT NOT NULL DEFAULT 'vertrouwd'")
             self._backfill_portfolio_aliases(conn)
+
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def _upsert_portfolio_alias(self, conn: sqlite3.Connection, alias: PortfolioAlias) -> None:
         from .identity import normalize_symbol
@@ -1232,13 +1239,14 @@ class SQLiteRepository:
                 conn.execute(
                     """
                     INSERT INTO peer_candidates
-                      (symbol, peer_symbol, peer_group, source, confidence, reason)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                      (symbol, peer_symbol, peer_group, source, confidence, reason, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(symbol, peer_symbol) DO UPDATE SET
                       peer_group=excluded.peer_group,
                       source=excluded.source,
                       confidence=excluded.confidence,
                       reason=excluded.reason,
+                      status=excluded.status,
                       updated_at=CURRENT_TIMESTAMP
                     """,
                     (
@@ -1248,6 +1256,7 @@ class SQLiteRepository:
                         candidate.source,
                         candidate.confidence,
                         candidate.reason,
+                        candidate.status,
                     ),
                 )
 
@@ -1255,10 +1264,10 @@ class SQLiteRepository:
         with self.connect() as conn:
             rows = conn.execute(
                 """
-                SELECT symbol, peer_symbol, peer_group, source, confidence, reason
+                SELECT symbol, peer_symbol, peer_group, source, confidence, reason, status
                 FROM peer_candidates
                 WHERE symbol = ?
-                ORDER BY confidence DESC, peer_symbol
+                ORDER BY CASE status WHEN 'vertrouwd' THEN 0 ELSE 1 END, confidence DESC, peer_symbol
                 """,
                 (symbol.upper(),),
             ).fetchall()
@@ -1270,6 +1279,7 @@ class SQLiteRepository:
                 source=row["source"],
                 confidence=row["confidence"],
                 reason=row["reason"],
+                status=row["status"],
             )
             for row in rows
         ]
@@ -1282,10 +1292,10 @@ class SQLiteRepository:
         with self.connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT symbol, peer_symbol, peer_group, source, confidence, reason
+                SELECT symbol, peer_symbol, peer_group, source, confidence, reason, status
                 FROM peer_candidates
                 WHERE symbol IN ({placeholders})
-                ORDER BY symbol, confidence DESC, peer_symbol
+                ORDER BY symbol, CASE status WHEN 'vertrouwd' THEN 0 ELSE 1 END, confidence DESC, peer_symbol
                 """,
                 normalized,
             ).fetchall()
@@ -1299,6 +1309,7 @@ class SQLiteRepository:
                     source=row["source"],
                     confidence=row["confidence"],
                     reason=row["reason"],
+                    status=row["status"],
                 )
             )
         return grouped

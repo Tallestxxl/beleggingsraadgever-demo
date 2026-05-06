@@ -1127,12 +1127,17 @@ def _v1_peer_status(
     warnings: list[str],
 ) -> tuple[str, str]:
     candidates = repository.peer_candidates_for_symbol(symbol)
-    available = sum(1 for candidate in candidates if _has_analysis_snapshots(repository, candidate.peer_symbol))
+    trusted = [candidate for candidate in candidates if candidate.status == "vertrouwd"]
+    proposed = [candidate for candidate in candidates if candidate.status != "vertrouwd"]
+    available = sum(1 for candidate in trusted if _has_analysis_snapshots(repository, candidate.peer_symbol))
     if available >= MIN_PEERS:
-        return "OK", f"{available} van {len(candidates)} peer(s) met lokale data."
+        detail = f"{available} van {len(trusted)} vertrouwde peer(s) met lokale data"
+        if proposed:
+            detail += f"; {len(proposed)} voorgesteld."
+        return "OK", detail + "."
     if candidates:
-        warnings.append(f"Peeranalyse voor {symbol} heeft minder dan {MIN_PEERS} beschikbare peers.")
-        return "Beperkt", f"{available} van {len(candidates)} peer(s) met lokale data."
+        warnings.append(f"Peeranalyse voor {symbol} heeft minder dan {MIN_PEERS} beschikbare vertrouwde peers.")
+        return "Beperkt", f"{available} van {len(trusted)} vertrouwde peer(s) met lokale data; {len(proposed)} voorgesteld."
     warnings.append(f"Nog geen peer-kandidaten voor {symbol}.")
     return "Ontbreekt", "Geen peer-kandidaten opgeslagen."
 
@@ -1493,15 +1498,22 @@ def portfolio_peer_coverage_rows(repository: SQLiteRepository, symbols: list[str
         peer_group = candidates[0].peer_group if candidates else ""
         if not peer_group and classification is not None and classification.theme != "Onbekend":
             peer_group = classification.theme
-        available = sum(1 for candidate in candidates if _has_analysis_snapshots(repository, candidate.peer_symbol))
+        trusted = [candidate for candidate in candidates if candidate.status == "vertrouwd"]
+        proposed = [candidate for candidate in candidates if candidate.status != "vertrouwd"]
+        available = sum(1 for candidate in trusted if _has_analysis_snapshots(repository, candidate.peer_symbol))
         rows.append(
             {
                 "symbol": symbol,
                 "peer_group": peer_group or "Nog onbekend",
                 "candidate_count": len(candidates),
+                "trusted_count": len(trusted),
+                "proposed_count": len(proposed),
                 "available_count": available,
-                "missing_count": max(0, len(candidates) - available),
-                "examples": ", ".join(candidate.peer_symbol for candidate in candidates[:5]),
+                "missing_count": max(0, len(trusted) - available),
+                "examples": ", ".join(
+                    candidate.peer_symbol + (" (?)" if candidate.status != "vertrouwd" else "")
+                    for candidate in candidates[:5]
+                ),
             }
         )
     return rows
@@ -1516,6 +1528,8 @@ def render_peer_coverage_table(rows: list[dict]) -> str:
           <td>{html.escape(row["symbol"])}</td>
           <td>{html.escape(row["peer_group"])}</td>
           <td>{row["candidate_count"]}</td>
+          <td>{row["trusted_count"]}</td>
+          <td>{row["proposed_count"]}</td>
           <td>{row["available_count"]}</td>
           <td>{row["missing_count"]}</td>
           <td>{html.escape(row["examples"]) if row["examples"] else "Nog te verrijken"}</td>
@@ -1524,7 +1538,7 @@ def render_peer_coverage_table(rows: list[dict]) -> str:
     )
     return f"""
           <table class="data-table">
-            <thead><tr><th>Aandeel</th><th>Peer-groep</th><th>Peers</th><th>Met data</th><th>Wacht op data</th><th>Voorbeelden</th></tr></thead>
+            <thead><tr><th>Aandeel</th><th>Peer-groep</th><th>Totaal</th><th>Vertrouwd</th><th>Voorgesteld</th><th>Met data</th><th>Wacht op data</th><th>Voorbeelden</th></tr></thead>
             <tbody>{body}</tbody>
           </table>"""
 
