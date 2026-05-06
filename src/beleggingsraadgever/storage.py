@@ -477,6 +477,42 @@ class SQLiteRepository:
 
         return sorted(hits, key=lambda hit: hit.score, reverse=True)[:limit]
 
+    def knowledge_document_count_for_symbol(self, symbol: str) -> int:
+        from .identity import normalize_symbol
+
+        normalized_symbol = normalize_symbol(symbol)
+        if not normalized_symbol:
+            return 0
+        accepted_symbols = {normalized_symbol}
+        for alias in self.portfolio_aliases_for_symbol(normalized_symbol):
+            accepted_symbols.add(normalize_symbol(alias.alias_key))
+            accepted_symbols.add(normalize_symbol(alias.raw_value))
+            accepted_symbols.add(normalize_symbol(alias.portfolio_symbol))
+        accepted_symbols = {item for item in accepted_symbols if item}
+
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT kc.document_id, kc.tags_json, d.title
+                FROM knowledge_chunks kc
+                JOIN documents d ON d.id = kc.document_id
+                """
+            ).fetchall()
+
+        document_ids = set()
+        for row in rows:
+            try:
+                tags = json.loads(row["tags_json"])
+            except json.JSONDecodeError:
+                tags = []
+            normalized_tags = {normalize_symbol(str(tag)) for tag in tags}
+            normalized_title = normalize_symbol(row["title"])
+            if normalized_tags & accepted_symbols or any(
+                normalized_title.startswith(accepted) for accepted in accepted_symbols
+            ):
+                document_ids.add(row["document_id"])
+        return len(document_ids)
+
     def upsert_financial_snapshot(self, snapshot: FinancialSnapshot) -> None:
         with self.connect() as conn:
             conn.execute(

@@ -28,6 +28,7 @@ from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk,
 from .classification import classify_company, classify_symbol
 from .models import CompanyProfile, InvestorProfile, PortfolioAsset, PortfolioClassification, PortfolioPosition
 from .models import PortfolioPerformanceSummary, PortfolioPositionPerformance
+from .peers import MIN_PEERS
 from .peer_discovery import refresh_peer_candidates, refresh_peer_candidates_for_portfolio
 from .portfolio import exposure_buckets, portfolio_position_exposures
 from .portfolio_importer import import_portfolio_csv
@@ -48,6 +49,26 @@ class SnapshotWorkflow:
     @property
     def can_import(self) -> bool:
         return not self.errors
+
+
+@dataclass(frozen=True)
+class V1StatusRow:
+    symbol: str
+    status_label: str
+    status_class: str
+    identity_label: str
+    identity_detail: str
+    market_label: str
+    market_detail: str
+    fundamentals_label: str
+    fundamentals_detail: str
+    classification_label: str
+    classification_detail: str
+    peer_label: str
+    peer_detail: str
+    knowledge_label: str
+    knowledge_detail: str
+    issues: list[str]
 
 
 CSS = """
@@ -114,7 +135,7 @@ body {
 
 .ticker-form {
   display: grid;
-  grid-template-columns: 96px minmax(120px, 180px) auto auto auto;
+  grid-template-columns: 96px minmax(120px, 180px) auto auto auto auto;
   gap: 8px;
   align-items: end;
 }
@@ -398,6 +419,64 @@ h3 {
   letter-spacing: 0;
 }
 
+.status-pill {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.status-ok {
+  border-color: #7eb795;
+  background: #e7f3eb;
+  color: #22643b;
+}
+
+.status-warn {
+  border-color: #d7a74c;
+  background: #fff4d8;
+  color: #7a4d0c;
+}
+
+.status-danger {
+  border-color: #db8b8b;
+  background: #fde7e7;
+  color: #8a1e1e;
+}
+
+.status-info {
+  border-color: #9eb3c7;
+  background: #eaf0f6;
+  color: #31506b;
+}
+
+.status-detail {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.status-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.status-actions form {
+  margin: 0;
+}
+
+.status-actions .button,
+.status-actions button {
+  min-height: 32px;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
 .evidence-list {
   display: grid;
   gap: 12px;
@@ -533,13 +612,17 @@ def _make_handler(repository: SQLiteRepository):
             if parsed.path == "/health":
                 self._send_json({"ok": True})
                 return
-            if parsed.path not in {"/", "/analyze", "/workflow", "/portfolio"}:
+            if parsed.path not in {"/", "/analyze", "/workflow", "/portfolio", "/status"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
 
             params = parse_qs(parsed.query)
             raw_symbol = params.get("symbol", ["DEMO"])[0].strip().upper() or "DEMO"
             symbol = resolve_analysis_symbol(repository, raw_symbol) or raw_symbol
+            if parsed.path == "/status":
+                message = params.get("message", [""])[0].strip()
+                self._send_html(build_status_page(repository, message=message or None))
+                return
             if parsed.path == "/portfolio":
                 message = params.get("message", [""])[0].strip()
                 self._send_html(build_portfolio_page(repository, message=message or None))
@@ -559,7 +642,7 @@ def _make_handler(repository: SQLiteRepository):
                     workflow = ensure_snapshot_workflow(symbol, auto_collect=True)
                     report = build_draft_report(repository, workflow)
 
-            self._send_html(build_page(symbol=symbol, report=report, error=error, workflow=workflow))
+            self._send_html(build_page(symbol=symbol, report=report, error=error, workflow=workflow, repository=repository))
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -570,6 +653,7 @@ def _make_handler(repository: SQLiteRepository):
                 "/portfolio/import-csv",
                 "/portfolio/profile",
                 "/portfolio/position",
+                "/status/refresh-peers",
             }:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
@@ -577,6 +661,22 @@ def _make_handler(repository: SQLiteRepository):
             body_length = int(self.headers.get("Content-Length", "0"))
             body = self.rfile.read(body_length).decode("utf-8")
             params = parse_qs(body)
+
+            if parsed.path == "/status/refresh-peers":
+                symbol = _first_param(params, "symbol").upper()
+                if symbol == "__ALL__":
+                    refreshed = refresh_peer_candidates_for_portfolio(repository)
+                    count = sum(len(candidates) for candidates in refreshed.values())
+                    self._redirect(f"/status?message={quote_plus(f'Peer-kandidaten herberekend: {count}')}")
+                    return
+                if not symbol:
+                    self._redirect("/status?message=Geen%20aandeel%20ontvangen")
+                    return
+                candidates = refresh_peer_candidates(repository, symbol)
+                self._redirect(
+                    f"/status?message={quote_plus(f'Peer-kandidaten voor {symbol} herberekend: {len(candidates)}')}"
+                )
+                return
 
             if parsed.path == "/portfolio/profile":
                 try:
@@ -689,6 +789,7 @@ def build_page(
     report: Optional[AdviceReport] = None,
     error: Optional[str] = None,
     workflow: Optional[SnapshotWorkflow] = None,
+    repository: Optional[SQLiteRepository] = None,
 ) -> str:
     escaped_symbol = html.escape(symbol)
     content = ""
@@ -708,7 +809,8 @@ def build_page(
     elif error:
         content = f'<div class="notice">{html.escape(error)}</div>'
     elif report:
-        content = render_report(report)
+        v1_status = build_v1_status_row(repository, report.symbol) if repository is not None else None
+        content = render_report(report, v1_status=v1_status)
     else:
         content = '<div class="notice">DEMO staat klaar als eerste analyse.</div>'
 
@@ -739,6 +841,7 @@ def build_shell(symbol: str, content: str) -> str:
           <button type="submit">Analyseer</button>
           <a class="button secondary" href="/analyze?symbol=DEMO">Demo</a>
           <a class="button secondary" href="/portfolio">Portefeuille</a>
+          <a class="button secondary" href="/status">V1-status</a>
         </form>
       </div>
     </header>
@@ -763,6 +866,304 @@ def build_portfolio_page(
     error: Optional[str] = None,
 ) -> str:
     return build_shell("DEMO", render_portfolio_dashboard(repository, message=message, error=error))
+
+
+def build_status_page(
+    repository: SQLiteRepository,
+    message: Optional[str] = None,
+    error: Optional[str] = None,
+) -> str:
+    return build_shell("DEMO", render_v1_status_dashboard(repository, message=message, error=error))
+
+
+def render_v1_status_dashboard(
+    repository: SQLiteRepository,
+    message: Optional[str] = None,
+    error: Optional[str] = None,
+) -> str:
+    symbols = [position.symbol for position in repository.latest_portfolio_positions()]
+    rows = [build_v1_status_row(repository, symbol) for symbol in symbols]
+    ready_count = sum(1 for row in rows if row.status_label == "V1-klaar")
+    warning_count = sum(1 for row in rows if row.status_label == "Bruikbaar met waarschuwing")
+    control_count = sum(1 for row in rows if row.status_label == "Controle nodig")
+    notice = ""
+    if error:
+        notice = f'<div class="notice">{html.escape(error)}</div>'
+    elif message:
+        notice = f'<div class="notice">{html.escape(message)}</div>'
+
+    return f"""
+    {notice}
+    <div class="report-header">
+      <div class="verdict">
+        <h2>V1-status</h2>
+        <p>Controlepaneel voor datakwaliteit, dekking en betrouwbaarheid per portefeuillepositie.</p>
+      </div>
+      <div class="metric">
+        <span class="metric-label">V1-klaar</span>
+        <span class="metric-value">{ready_count}</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Waarschuwing</span>
+        <span class="metric-value">{warning_count}</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Controle nodig</span>
+        <span class="metric-value">{control_count}</span>
+      </div>
+    </div>
+    <section>
+      <div class="workflow-header">
+        <div>
+          <h3>Dekking portefeuille</h3>
+          <p class="summary">V1-klaar betekent: analyseerbare cijfers, recente koersdata, sector/thema, voldoende peerbasis en minimaal één kennisfragment of casusnotitie.</p>
+        </div>
+        <form method="post" action="/status/refresh-peers">
+          <input type="hidden" name="symbol" value="__ALL__">
+          <button type="submit">Herbereken peers</button>
+        </form>
+      </div>
+      {render_v1_status_table(rows)}
+    </section>"""
+
+
+def render_v1_status_table(rows: list[V1StatusRow]) -> str:
+    if not rows:
+        return '<p class="evidence-meta">Nog geen portefeuilleposities om V1-status voor te bepalen.</p>'
+    body = "".join(render_v1_status_table_row(row) for row in rows)
+    return f"""
+          <table class="data-table">
+            <thead>
+              <tr><th>Aandeel</th><th>Status</th><th>Identiteit</th><th>Koersdata</th><th>Fundamentals</th><th>Sector/thema</th><th>Peers</th><th>Kennis</th><th>Acties</th></tr>
+            </thead>
+            <tbody>{body}</tbody>
+          </table>"""
+
+
+def render_v1_status_table_row(row: V1StatusRow) -> str:
+    symbol = html.escape(row.symbol)
+    issue_detail = " ".join(row.issues[:3])
+    status_detail = f'<span class="status-detail">{html.escape(issue_detail)}</span>' if issue_detail else ""
+    return f"""
+        <tr>
+          <td><strong>{symbol}</strong></td>
+          <td>{render_status_pill(row.status_label, row.status_class)}{status_detail}</td>
+          <td>{render_status_pill(row.identity_label, _label_class(row.identity_label))}<span class="status-detail">{html.escape(row.identity_detail)}</span></td>
+          <td>{render_status_pill(row.market_label, _label_class(row.market_label))}<span class="status-detail">{html.escape(row.market_detail)}</span></td>
+          <td>{render_status_pill(row.fundamentals_label, _label_class(row.fundamentals_label))}<span class="status-detail">{html.escape(row.fundamentals_detail)}</span></td>
+          <td>{render_status_pill(row.classification_label, _label_class(row.classification_label))}<span class="status-detail">{html.escape(row.classification_detail)}</span></td>
+          <td>{render_status_pill(row.peer_label, _label_class(row.peer_label))}<span class="status-detail">{html.escape(row.peer_detail)}</span></td>
+          <td>{render_status_pill(row.knowledge_label, _label_class(row.knowledge_label))}<span class="status-detail">{html.escape(row.knowledge_detail)}</span></td>
+          <td>{render_v1_status_actions(row.symbol)}</td>
+        </tr>"""
+
+
+def render_v1_status_actions(symbol: str) -> str:
+    escaped_symbol = html.escape(symbol)
+    quoted_symbol = quote_plus(symbol)
+    return f"""
+            <div class="status-actions">
+              <a class="button secondary" href="/analyze?symbol={quoted_symbol}">Analyseer</a>
+              <a class="button secondary" href="/workflow?symbol={quoted_symbol}">Workflow</a>
+              <form method="post" action="/workflow/collect">
+                <input type="hidden" name="symbol" value="{escaped_symbol}">
+                <button type="submit">Verrijk data</button>
+              </form>
+              <form method="post" action="/status/refresh-peers">
+                <input type="hidden" name="symbol" value="{escaped_symbol}">
+                <button type="submit">Zoek peers</button>
+              </form>
+            </div>"""
+
+
+def render_status_pill(label: str, status_class: str) -> str:
+    return f'<span class="status-pill status-{html.escape(status_class)}">{html.escape(label)}</span>'
+
+
+def build_v1_status_row(repository: SQLiteRepository, symbol: str) -> V1StatusRow:
+    canonical_symbol = resolve_analysis_symbol(repository, symbol) or symbol.strip().upper()
+    issues: list[str] = []
+    blockers: list[str] = []
+    warnings: list[str] = []
+
+    identity_label, identity_detail = _v1_identity_status(repository, canonical_symbol, warnings)
+    market_label, market_detail = _v1_market_status(repository, canonical_symbol, blockers, warnings)
+    fundamentals_label, fundamentals_detail = _v1_fundamentals_status(repository, canonical_symbol, blockers, warnings)
+    classification_label, classification_detail = _v1_classification_status(
+        repository, canonical_symbol, blockers, warnings
+    )
+    peer_label, peer_detail = _v1_peer_status(repository, canonical_symbol, warnings)
+    knowledge_label, knowledge_detail = _v1_knowledge_status(repository, canonical_symbol, warnings)
+
+    issues.extend(blockers)
+    issues.extend(warnings)
+    if blockers:
+        status_label = "Controle nodig"
+        status_class = "danger"
+    elif warnings:
+        status_label = "Bruikbaar met waarschuwing"
+        status_class = "warn"
+    else:
+        status_label = "V1-klaar"
+        status_class = "ok"
+
+    return V1StatusRow(
+        symbol=canonical_symbol,
+        status_label=status_label,
+        status_class=status_class,
+        identity_label=identity_label,
+        identity_detail=identity_detail,
+        market_label=market_label,
+        market_detail=market_detail,
+        fundamentals_label=fundamentals_label,
+        fundamentals_detail=fundamentals_detail,
+        classification_label=classification_label,
+        classification_detail=classification_detail,
+        peer_label=peer_label,
+        peer_detail=peer_detail,
+        knowledge_label=knowledge_label,
+        knowledge_detail=knowledge_detail,
+        issues=issues,
+    )
+
+
+def _v1_identity_status(
+    repository: SQLiteRepository,
+    symbol: str,
+    warnings: list[str],
+) -> tuple[str, str]:
+    aliases = repository.portfolio_aliases_for_symbol(symbol)
+    visible_aliases = [
+        alias
+        for alias in aliases
+        if alias.alias_key != symbol or alias.alias_type != "portfolio_symbol"
+    ]
+    profile = repository.company_profile(symbol)
+    if profile and profile.provider_symbol:
+        alias_text = f", {len(visible_aliases)} alias(s)" if visible_aliases else ""
+        return "OK", f"Provider-symbol {profile.provider_symbol}{alias_text}."
+    if visible_aliases:
+        return "OK", f"{len(visible_aliases)} alias(s) gekoppeld; providerprofiel ontbreekt nog."
+    warnings.append("Identiteitskoppeling is alleen een directe ticker; controleer provider-symbolen bij naam/tickerverwarring.")
+    return "Basis", "Alleen directe portefeuilleticker bekend."
+
+
+def _v1_market_status(
+    repository: SQLiteRepository,
+    symbol: str,
+    blockers: list[str],
+    warnings: list[str],
+) -> tuple[str, str]:
+    try:
+        market = repository.latest_market_snapshot(symbol)
+    except LookupError:
+        market = None
+    if market is not None:
+        age = _days_old(market.as_of)
+        if age is not None and age > 45:
+            warnings.append(f"Koersdata voor {symbol} is ouder dan 45 dagen.")
+            return "Oud", f"Analysesnapshot {market.as_of}."
+        return "OK", f"Analysesnapshot {market.as_of}."
+
+    portfolio_price = repository.latest_portfolio_price(symbol)
+    if portfolio_price is not None:
+        warnings.append(f"{symbol} heeft alleen een portefeuillekoers; waarderingsdata uit analysesnapshot ontbreekt.")
+        return "CSV", f"Portefeuillekoers {portfolio_price.as_of}."
+
+    blockers.append(f"Koersdata voor {symbol} ontbreekt.")
+    return "Ontbreekt", "Geen koerssnapshot gevonden."
+
+
+def _v1_fundamentals_status(
+    repository: SQLiteRepository,
+    symbol: str,
+    blockers: list[str],
+    warnings: list[str],
+) -> tuple[str, str]:
+    try:
+        financial = repository.latest_financial_snapshot(symbol)
+    except LookupError:
+        blockers.append(f"Fundamentals voor {symbol} ontbreken.")
+        return "Ontbreekt", "Geen fundamentalsnapshot gevonden."
+    age = _days_old(financial.period_end)
+    if age is not None and age > 550:
+        warnings.append(f"Fundamentals voor {symbol} zijn ouder dan circa 18 maanden.")
+        return "Oud", f"{financial.period_type} t/m {financial.period_end}."
+    return "OK", f"{financial.period_type} t/m {financial.period_end}."
+
+
+def _v1_classification_status(
+    repository: SQLiteRepository,
+    symbol: str,
+    blockers: list[str],
+    warnings: list[str],
+) -> tuple[str, str]:
+    classification = repository.portfolio_classification(symbol)
+    if (
+        classification is None
+        or classification.sector == "Onbekend"
+        or classification.theme == "Onbekend"
+    ):
+        blockers.append(f"Sector/thema voor {symbol} ontbreekt of is onbekend.")
+        return "Ontbreekt", "Sector/thema nog niet betrouwbaar geclassificeerd."
+
+    profile = repository.company_profile(symbol)
+    source = profile.classification_source if profile else ""
+    confidence = profile.classification_confidence if profile else 0.0
+    detail = f"{classification.sector} / {classification.theme}"
+    if source:
+        detail += f" via {source}"
+    if confidence:
+        detail += f" ({confidence:.0%})"
+        if confidence < 0.60:
+            warnings.append(f"Sector/thema-confidence voor {symbol} is lager dan 60%.")
+            return "Laag", detail + "."
+    return "OK", detail + "."
+
+
+def _v1_peer_status(
+    repository: SQLiteRepository,
+    symbol: str,
+    warnings: list[str],
+) -> tuple[str, str]:
+    candidates = repository.peer_candidates_for_symbol(symbol)
+    available = sum(1 for candidate in candidates if _has_analysis_snapshots(repository, candidate.peer_symbol))
+    if available >= MIN_PEERS:
+        return "OK", f"{available} van {len(candidates)} peer(s) met lokale data."
+    if candidates:
+        warnings.append(f"Peeranalyse voor {symbol} heeft minder dan {MIN_PEERS} beschikbare peers.")
+        return "Beperkt", f"{available} van {len(candidates)} peer(s) met lokale data."
+    warnings.append(f"Nog geen peer-kandidaten voor {symbol}.")
+    return "Ontbreekt", "Geen peer-kandidaten opgeslagen."
+
+
+def _v1_knowledge_status(
+    repository: SQLiteRepository,
+    symbol: str,
+    warnings: list[str],
+) -> tuple[str, str]:
+    count = repository.knowledge_document_count_for_symbol(symbol)
+    if count > 0:
+        return "OK", f"{count} document(en) of casusnotitie(s)."
+    warnings.append(f"Geen aandeel-specifieke kennisfragmenten of casusnotities voor {symbol}.")
+    return "Ontbreekt", "Geen aandeel-specifieke kennis gevonden."
+
+
+def _days_old(value: str) -> Optional[int]:
+    try:
+        return (date.today() - date.fromisoformat(value)).days
+    except (TypeError, ValueError):
+        return None
+
+
+def _label_class(label: str) -> str:
+    if label in {"OK", "V1-klaar"}:
+        return "ok"
+    if label in {"Ontbreekt", "Controle nodig"}:
+        return "danger"
+    if label in {"Basis", "CSV", "Oud", "Laag", "Beperkt", "Bruikbaar met waarschuwing"}:
+        return "warn"
+    return "info"
 
 
 def render_portfolio_dashboard(
@@ -1856,7 +2257,7 @@ def render_case_note_form(workflow: SnapshotWorkflow) -> str:
         </section>"""
 
 
-def render_report(report: AdviceReport) -> str:
+def render_report(report: AdviceReport, v1_status: Optional[V1StatusRow] = None) -> str:
     flags = ""
     if report.score.flags:
         flags = f"""
@@ -1878,6 +2279,7 @@ def render_report(report: AdviceReport) -> str:
     if not sources:
         sources = '<p class="evidence-meta">Geen veldbronnen opgeslagen voor dit aandeel.</p>'
     assumptions = "".join(f"<li>{html.escape(item)}</li>" for item in report.assumptions)
+    data_quality = render_v1_analysis_warning(v1_status) if v1_status is not None else ""
     portfolio_fit = ""
     if report.portfolio_fit:
         fit = report.portfolio_fit
@@ -1967,6 +2369,7 @@ def render_report(report: AdviceReport) -> str:
           <h3>Dataversheid</h3>
           <ul class="data-list">{freshness}</ul>
         </section>
+        {data_quality}
         {portfolio_fit}
         <section>
           <details class="supporting-detail">
@@ -2015,6 +2418,22 @@ def render_peer_analysis(report: AdviceReport) -> str:
             <tbody>{rows}</tbody>
           </table>
           <ul class="assumption-list">{notes}</ul>
+        </section>"""
+
+
+def render_v1_analysis_warning(row: Optional[V1StatusRow]) -> str:
+    if row is None or row.status_label == "V1-klaar":
+        return ""
+    issues = "".join(f"<li>{html.escape(issue)}</li>" for issue in row.issues[:5])
+    return f"""
+        <section>
+          <h3>V1-datakwaliteit</h3>
+          <p class="summary">{render_status_pill(row.status_label, row.status_class)} <span class="status-detail">Deze analyse is bruikbaar in verhouding tot de onderstaande datadekking.</span></p>
+          <ul class="assumption-list">{issues}</ul>
+          <div class="button-row">
+            <a class="button secondary" href="/status">Open V1-status</a>
+            <a class="button secondary" href="/workflow?symbol={quote_plus(row.symbol)}">Open workflow</a>
+          </div>
         </section>"""
 
 

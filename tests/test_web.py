@@ -8,6 +8,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from beleggingsraadgever.advisor import Advisor
 from beleggingsraadgever.importer import write_snapshot_template
+from beleggingsraadgever.models import CompanyProfile, PortfolioClassification
 from beleggingsraadgever.sample_data import seed_demo
 from beleggingsraadgever.storage import SQLiteRepository
 from beleggingsraadgever.web import (
@@ -16,6 +17,7 @@ from beleggingsraadgever.web import (
     build_draft_report,
     build_page,
     build_portfolio_page,
+    build_status_page,
     ensure_snapshot_workflow,
     import_portfolio_csv_workflow,
     save_portfolio_position,
@@ -368,6 +370,57 @@ class WebTests(unittest.TestCase):
             self.assertIn('name="annual_income" type="text" inputmode="decimal" value="90.000"', html)
             self.assertIn('name="cash_buffer" type="text" inputmode="decimal" value="25.000"', html)
             self.assertIn('name="asset_house" type="text" inputmode="decimal" value="500.000"', html)
+
+    def test_status_page_renders_v1_control_panel(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            seed_demo(repo)
+            save_portfolio_position(
+                repo,
+                {
+                    "symbol": ["DEMO"],
+                    "account": ["Hoofdrekening"],
+                    "quantity": ["10"],
+                    "average_cost": ["90"],
+                    "currency": ["EUR"],
+                    "as_of": ["2026-05-05"],
+                },
+            )
+            repo.upsert_portfolio_classification(
+                PortfolioClassification(symbol="DEMO", sector="Industrials", theme="Technology hardware")
+            )
+            repo.upsert_company_profile(
+                CompanyProfile(
+                    symbol="DEMO",
+                    provider_symbol="DEMO",
+                    source_name="Testprovider",
+                    as_of="2026-05-05",
+                    sector="Industrials",
+                    industry="Technology hardware",
+                    classification_confidence=0.85,
+                    classification_source="test_profile",
+                )
+            )
+            repo.add_document(
+                title="DEMO casusnotitie",
+                source_type="eigen_notitie",
+                raw_text="DEMO heeft een lokaal kennisfragment voor de V1-status.",
+                publication_date="2026-05-05",
+                tags=["DEMO"],
+            )
+
+            html = build_status_page(repo)
+
+            self.assertIn("V1-status", html)
+            self.assertIn("Dekking portefeuille", html)
+            self.assertIn("DEMO", html)
+            self.assertIn("Identiteit", html)
+            self.assertIn("Koersdata", html)
+            self.assertIn("Analyseer", html)
+            self.assertIn("Zoek peers", html)
+            self.assertIn("Open V1-status", build_page("DEMO", Advisor(repo).analyze("DEMO"), repository=repo))
 
     def test_portfolio_csv_workflow_imports_file_path(self) -> None:
         import tempfile
