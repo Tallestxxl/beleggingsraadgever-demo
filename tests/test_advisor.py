@@ -198,6 +198,36 @@ class AdvisorTests(unittest.TestCase):
             self.assertNotIn("APERAM dividendcasus", evidence_titles)
             self.assertIn("Algemeen dividendprincipe", evidence_titles)
 
+    def test_sector_scoped_evidence_must_match_analysis_sector(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.upsert_portfolio_classification(
+                PortfolioClassification(symbol="BESI", sector="Semiconductors", theme="Semiconductor equipment")
+            )
+            repo.add_document(
+                title="Semiconductor margin principle",
+                source_type="educatie",
+                raw_text="Semiconductorbedrijven vragen discipline rond waardering, marge, vrije kasstroom en risico.",
+                tags=["Semiconductors", "scope:sector", "marge"],
+            )
+            repo.add_document(
+                title="Construction margin principle",
+                source_type="educatie",
+                raw_text="Bouwbedrijven vragen discipline rond waardering, marge, vrije kasstroom en risico.",
+                tags=["Construction", "scope:sector", "marge"],
+            )
+
+            report = Advisor(repo).analyze_snapshots(
+                "BESI",
+                FinancialSnapshot(symbol="BESI", period_end="2025-12-31", period_type="TTM", revenue=1_000_000_000),
+                MarketSnapshot(symbol="BESI", as_of="2026-05-06", close_price=130, currency="EUR"),
+            )
+
+            evidence_titles = [hit.title for hit in report.evidence]
+            self.assertIn("Semiconductor margin principle", evidence_titles)
+            self.assertNotIn("Construction margin principle", evidence_titles)
+
     def test_peer_analysis_compares_against_available_peer_snapshots(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")

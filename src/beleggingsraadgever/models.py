@@ -189,6 +189,20 @@ class KnowledgeHit:
 
 
 @dataclass(frozen=True)
+class KnowledgeDocument:
+    document_id: int
+    title: str
+    source_type: str
+    raw_text: str
+    author: Optional[str] = None
+    publication_date: Optional[str] = None
+    source_path: Optional[str] = None
+    tags: List[str] = field(default_factory=list)
+    chunk_count: int = 0
+    created_at: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class Principle:
     title: str
     statement: str

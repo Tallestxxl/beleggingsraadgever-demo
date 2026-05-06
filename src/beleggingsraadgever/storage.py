@@ -14,6 +14,7 @@ from .models import (
     DataSource,
     FinancialSnapshot,
     InvestorProfile,
+    KnowledgeDocument,
     KnowledgeHit,
     MacroObservation,
     MarketSnapshot,
@@ -350,7 +351,22 @@ class SQLiteRepository:
                 (source_type, checksum),
             ).fetchone()
             if existing is not None:
-                return int(existing["id"])
+                document_id = int(existing["id"])
+                conn.execute(
+                    """
+                    UPDATE documents
+                    SET title = ?,
+                        author = ?,
+                        publication_date = ?,
+                        source_path = ?,
+                        raw_text = ?
+                    WHERE id = ?
+                    """,
+                    (title, author, publication_date, source_path, raw_text, document_id),
+                )
+                conn.execute("DELETE FROM knowledge_chunks WHERE document_id = ?", (document_id,))
+                self._insert_knowledge_chunks(conn, document_id, raw_text, tags)
+                return document_id
 
             cursor = conn.execute(
                 """
@@ -362,25 +378,85 @@ class SQLiteRepository:
             )
             document_id = int(cursor.lastrowid)
 
-            chunks = chunk_text(raw_text, document_id=document_id, tags=tags)
-            for chunk in chunks:
-                embedding = self.vectorizer.vectorize(chunk.text)
-                conn.execute(
-                    """
-                    INSERT INTO knowledge_chunks
-                      (document_id, chunk_index, text, tags_json, embedding_json)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        document_id,
-                        chunk.chunk_index,
-                        chunk.text,
-                        json.dumps(chunk.tags),
-                        json.dumps(embedding),
-                    ),
-                )
+            self._insert_knowledge_chunks(conn, document_id, raw_text, tags)
 
         return document_id
+
+    def _insert_knowledge_chunks(
+        self,
+        conn: sqlite3.Connection,
+        document_id: int,
+        raw_text: str,
+        tags: Iterable[str],
+    ) -> None:
+        chunks = chunk_text(raw_text, document_id=document_id, tags=tags)
+        for chunk in chunks:
+            embedding = self.vectorizer.vectorize(chunk.text)
+            conn.execute(
+                """
+                INSERT INTO knowledge_chunks
+                  (document_id, chunk_index, text, tags_json, embedding_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    document_id,
+                    chunk.chunk_index,
+                    chunk.text,
+                    json.dumps(chunk.tags),
+                    json.dumps(embedding),
+                ),
+            )
+
+    def list_knowledge_documents(self, limit: int = 250) -> List[KnowledgeDocument]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                  d.id,
+                  d.title,
+                  d.source_type,
+                  d.author,
+                  d.publication_date,
+                  d.source_path,
+                  d.raw_text,
+                  d.created_at,
+                  COUNT(kc.id) AS chunk_count,
+                  (
+                    SELECT first_chunk.tags_json
+                    FROM knowledge_chunks first_chunk
+                    WHERE first_chunk.document_id = d.id
+                    ORDER BY first_chunk.chunk_index
+                    LIMIT 1
+                  ) AS tags_json
+                FROM documents d
+                LEFT JOIN knowledge_chunks kc ON kc.document_id = d.id
+                GROUP BY d.id
+                ORDER BY COALESCE(d.publication_date, d.created_at) DESC, d.id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        documents: List[KnowledgeDocument] = []
+        for row in rows:
+            try:
+                tags = json.loads(row["tags_json"] or "[]")
+            except json.JSONDecodeError:
+                tags = []
+            documents.append(
+                KnowledgeDocument(
+                    document_id=row["id"],
+                    title=row["title"],
+                    source_type=row["source_type"],
+                    author=row["author"],
+                    publication_date=row["publication_date"],
+                    source_path=row["source_path"],
+                    raw_text=row["raw_text"],
+                    tags=tags,
+                    chunk_count=row["chunk_count"],
+                    created_at=row["created_at"],
+                )
+            )
+        return documents
 
     def add_principle(self, principle: Principle) -> int:
         with self.connect() as conn:

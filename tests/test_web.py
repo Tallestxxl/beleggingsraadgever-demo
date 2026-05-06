@@ -15,6 +15,7 @@ from beleggingsraadgever.web import (
     SnapshotWorkflow,
     archive_imported_snapshot,
     build_draft_report,
+    build_knowledge_page,
     build_page,
     build_portfolio_page,
     build_status_page,
@@ -23,6 +24,7 @@ from beleggingsraadgever.web import (
     save_portfolio_position,
     save_portfolio_profile,
     save_case_note_workflow,
+    save_knowledge_document_workflow,
 )
 
 
@@ -370,6 +372,36 @@ class WebTests(unittest.TestCase):
             self.assertIn('name="annual_income" type="text" inputmode="decimal" value="90.000"', html)
             self.assertIn('name="cash_buffer" type="text" inputmode="decimal" value="25.000"', html)
             self.assertIn('name="asset_house" type="text" inputmode="decimal" value="500.000"', html)
+
+    def test_knowledge_page_imports_scoped_document(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+
+            message = save_knowledge_document_workflow(
+                repo,
+                {
+                    "title": ["Aperam dividend"],
+                    "source_type": ["beleggers_belangen"],
+                    "publication_date": ["2026-05-05"],
+                    "scope_type": ["aandeel"],
+                    "scope_value": ["APERAM"],
+                    "tags": ["dividend, vrije kasstroom"],
+                    "raw_text": ["Dividend moet uit vrije kasstroom betaald kunnen worden."],
+                },
+            )
+
+            self.assertIn("Kennisfragment opgeslagen", message)
+            documents = repo.list_knowledge_documents()
+            self.assertEqual(len(documents), 1)
+            self.assertEqual(documents[0].tags[:2], ["APERAM", "scope:aandeel"])
+            html = build_knowledge_page(repo)
+            self.assertIn("Kennisbibliotheek", html)
+            self.assertIn("Aperam dividend", html)
+            self.assertIn("Aandeel: APERAM", html)
+            self.assertIn("Dividend moet uit vrije kasstroom", html)
 
     def test_status_page_renders_v1_control_panel(self) -> None:
         import tempfile

@@ -7,6 +7,7 @@ from typing import List, Optional
 from .formatting import format_currency
 from .identity import aliases_for_data_sources, candidate_portfolio_symbols, normalize_symbol
 from .indicators import build_score, conviction_from_score, verdict_from_score
+from .knowledge_scope import knowledge_scope_from_tags, scope_matches_analysis
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeHit, MarketSnapshot, PortfolioFit
 from .peers import SnapshotPair, build_peer_analysis
 from .portfolio import effective_classification, exposure_buckets, portfolio_position_exposures
@@ -15,14 +16,6 @@ from .storage import SQLiteRepository
 
 SECTOR_WARNING_THRESHOLD = 0.20
 THEME_WARNING_THRESHOLD = 0.25
-SYMBOL_SCOPED_KNOWLEDGE_TYPES = {
-    "curated_public_sources",
-    "public_data_snapshot",
-    "public_market_data",
-}
-SYMBOL_SCOPED_KNOWLEDGE_TAGS = {
-    "CASUSNOTITIE",
-}
 
 TRANSACTION_LABELS = {
     "niet_kopen": "Niet kopen",
@@ -417,11 +410,17 @@ class Advisor:
             query_parts.append("sterke vrije kasstroom kapitaalallocatie")
 
         accepted_symbols = self._accepted_evidence_symbols(symbol)
+        classification = effective_classification(self.repository, symbol)
         hits = self.repository.search_knowledge(" ".join(query_parts), limit=50)
         evidence: list[KnowledgeHit] = []
         seen_sources: set[tuple[str, str]] = set()
         for hit in hits:
-            if not _knowledge_hit_matches_symbol(hit, accepted_symbols):
+            if not _knowledge_hit_matches_analysis(
+                hit,
+                accepted_symbols=accepted_symbols,
+                sector=classification.sector,
+                theme=classification.theme,
+            ):
                 continue
             source_key = (hit.title, hit.source_type)
             if source_key in seen_sources:
@@ -509,25 +508,19 @@ def _classification_symbol(
     return fallback_symbol
 
 
-def _knowledge_hit_matches_symbol(hit: KnowledgeHit, accepted_symbols: set[str]) -> bool:
-    scope_symbol = _knowledge_hit_scope_symbol(hit)
-    if scope_symbol is None:
-        return True
-    return scope_symbol in accepted_symbols
-
-
-def _knowledge_hit_scope_symbol(hit: KnowledgeHit) -> Optional[str]:
-    if not hit.chunk.tags:
-        return None
-    primary_tag = normalize_symbol(str(hit.chunk.tags[0]))
-    if not primary_tag:
-        return None
-    normalized_tags = {normalize_symbol(str(tag)) for tag in hit.chunk.tags}
-    if hit.source_type in SYMBOL_SCOPED_KNOWLEDGE_TYPES:
-        return primary_tag
-    if normalized_tags & SYMBOL_SCOPED_KNOWLEDGE_TAGS:
-        return primary_tag
-    return None
+def _knowledge_hit_matches_analysis(
+    hit: KnowledgeHit,
+    *,
+    accepted_symbols: set[str],
+    sector: Optional[str],
+    theme: Optional[str],
+) -> bool:
+    return scope_matches_analysis(
+        knowledge_scope_from_tags(hit.source_type, hit.chunk.tags),
+        accepted_symbols=accepted_symbols,
+        sector=sector,
+        theme=theme,
+    )
 
 
 def _transaction_rationale(

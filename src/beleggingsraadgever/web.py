@@ -24,10 +24,11 @@ from .importer import (
     validate_company_snapshot,
     write_snapshot_template,
 )
+from .knowledge_scope import build_knowledge_tags, knowledge_scope_from_tags
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
 from .classification import classify_company, classify_symbol
 from .models import CompanyProfile, InvestorProfile, PortfolioAsset, PortfolioClassification, PortfolioPosition
-from .models import PortfolioPerformanceSummary, PortfolioPositionPerformance
+from .models import KnowledgeDocument, PortfolioPerformanceSummary, PortfolioPositionPerformance
 from .peers import MIN_PEERS
 from .peer_discovery import refresh_peer_candidates, refresh_peer_candidates_for_portfolio
 from .portfolio import exposure_buckets, portfolio_position_exposures
@@ -135,7 +136,7 @@ body {
 
 .ticker-form {
   display: grid;
-  grid-template-columns: 96px minmax(120px, 180px) auto auto auto auto;
+  grid-template-columns: 96px minmax(120px, 180px) auto auto auto auto auto;
   gap: 8px;
   align-items: end;
 }
@@ -182,7 +183,8 @@ textarea {
   gap: 12px;
 }
 
-.note-form input[type="text"] {
+.note-form input[type="text"],
+.knowledge-form input[type="text"] {
   text-transform: none;
 }
 
@@ -192,13 +194,15 @@ textarea {
 }
 
 .note-form .form-grid,
+.knowledge-form .form-grid,
 .portfolio-form .form-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(160px, 220px);
   gap: 12px;
 }
 
-.portfolio-form {
+.portfolio-form,
+.knowledge-form {
   display: grid;
   gap: 12px;
 }
@@ -562,6 +566,7 @@ li + li {
   }
 
   .note-form .form-grid,
+  .knowledge-form .form-grid,
   .portfolio-form .form-grid,
   .asset-grid {
     grid-template-columns: 1fr;
@@ -612,13 +617,17 @@ def _make_handler(repository: SQLiteRepository):
             if parsed.path == "/health":
                 self._send_json({"ok": True})
                 return
-            if parsed.path not in {"/", "/analyze", "/workflow", "/portfolio", "/status"}:
+            if parsed.path not in {"/", "/analyze", "/workflow", "/portfolio", "/status", "/knowledge"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
 
             params = parse_qs(parsed.query)
             raw_symbol = params.get("symbol", ["DEMO"])[0].strip().upper() or "DEMO"
             symbol = resolve_analysis_symbol(repository, raw_symbol) or raw_symbol
+            if parsed.path == "/knowledge":
+                message = params.get("message", [""])[0].strip()
+                self._send_html(build_knowledge_page(repository, message=message or None))
+                return
             if parsed.path == "/status":
                 message = params.get("message", [""])[0].strip()
                 self._send_html(build_status_page(repository, message=message or None))
@@ -653,6 +662,7 @@ def _make_handler(repository: SQLiteRepository):
                 "/portfolio/import-csv",
                 "/portfolio/profile",
                 "/portfolio/position",
+                "/knowledge/import",
                 "/status/refresh-peers",
                 "/status/peer-status",
             }:
@@ -686,6 +696,15 @@ def _make_handler(repository: SQLiteRepository):
                     self._redirect(f"/status?message={quote_plus(str(error))}")
                     return
                 self._redirect(f"/status?message={quote_plus(message)}")
+                return
+
+            if parsed.path == "/knowledge/import":
+                try:
+                    message = save_knowledge_document_workflow(repository, params)
+                except ValueError as error:
+                    self._send_html(build_knowledge_page(repository, error=str(error)))
+                    return
+                self._redirect(f"/knowledge?message={quote_plus(message)}")
                 return
 
             if parsed.path == "/portfolio/profile":
@@ -851,6 +870,7 @@ def build_shell(symbol: str, content: str) -> str:
           <button type="submit">Analyseer</button>
           <a class="button secondary" href="/analyze?symbol=DEMO">Demo</a>
           <a class="button secondary" href="/portfolio">Portefeuille</a>
+          <a class="button secondary" href="/knowledge">Kennis</a>
           <a class="button secondary" href="/status">V1-status</a>
         </form>
       </div>
@@ -884,6 +904,165 @@ def build_status_page(
     error: Optional[str] = None,
 ) -> str:
     return build_shell("DEMO", render_v1_status_dashboard(repository, message=message, error=error))
+
+
+def build_knowledge_page(
+    repository: SQLiteRepository,
+    message: Optional[str] = None,
+    error: Optional[str] = None,
+) -> str:
+    return build_shell("DEMO", render_knowledge_dashboard(repository, message=message, error=error))
+
+
+SOURCE_TYPE_LABELS = {
+    "beleggers_belangen": "Beleggers Belangen",
+    "educatie": "Educatie",
+    "podcast": "Podcast",
+    "eigen_notitie": "Eigen notitie",
+    "jaarverslag": "Jaarverslag",
+    "overig": "Overig",
+}
+
+
+def render_knowledge_dashboard(
+    repository: SQLiteRepository,
+    message: Optional[str] = None,
+    error: Optional[str] = None,
+) -> str:
+    documents = repository.list_knowledge_documents()
+    counts = _knowledge_scope_counts(documents)
+    notice = ""
+    if error:
+        notice = f'<div class="notice">{html.escape(error)}</div>'
+    elif message:
+        notice = f'<div class="notice">{html.escape(message)}</div>'
+
+    return f"""
+    {notice}
+    <div class="report-header">
+      <div class="verdict">
+        <h2>Kennisbibliotheek</h2>
+        <p>Lokale kennisfragmenten met expliciete scope voor veilige bewijsvoering.</p>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Fragmenten</span>
+        <span class="metric-value">{len(documents)}</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Aandeel</span>
+        <span class="metric-value">{counts["symbol"]}</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Sector/thema</span>
+        <span class="metric-value">{counts["sector"] + counts["theme"]}</span>
+      </div>
+    </div>
+    <section>
+      <h3>Nieuw kennisfragment</h3>
+      {render_knowledge_import_form()}
+    </section>
+    <section>
+      <h3>Bibliotheek</h3>
+      {render_knowledge_document_table(documents)}
+    </section>"""
+
+
+def render_knowledge_import_form() -> str:
+    source_options = "".join(
+        f'<option value="{html.escape(value)}">{html.escape(label)}</option>'
+        for value, label in SOURCE_TYPE_LABELS.items()
+    )
+    return f"""
+      <form class="knowledge-form" method="post" action="/knowledge/import">
+        <div class="form-grid">
+          <div>
+            <label for="knowledge-title">Titel</label>
+            <input id="knowledge-title" name="title" type="text" autocomplete="off">
+          </div>
+          <div>
+            <label for="knowledge-date">Datum</label>
+            <input id="knowledge-date" name="publication_date" type="date" value="{date.today().isoformat()}">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label for="knowledge-source-type">Bron/type</label>
+            <select id="knowledge-source-type" name="source_type">{source_options}</select>
+          </div>
+          <div>
+            <label for="knowledge-source-path">Bronpad of URL</label>
+            <input id="knowledge-source-path" name="source_path" type="text" autocomplete="off">
+          </div>
+        </div>
+        <div class="form-grid">
+          <div>
+            <label for="knowledge-scope-type">Scope</label>
+            <select id="knowledge-scope-type" name="scope_type">
+              <option value="algemeen">Algemeen</option>
+              <option value="aandeel">Aandeel</option>
+              <option value="sector">Sector</option>
+              <option value="thema">Thema</option>
+            </select>
+          </div>
+          <div>
+            <label for="knowledge-scope-value">Scopewaarde</label>
+            <input id="knowledge-scope-value" name="scope_value" type="text" autocomplete="off">
+          </div>
+        </div>
+        <div>
+          <label for="knowledge-tags">Tags</label>
+          <input id="knowledge-tags" name="tags" type="text" autocomplete="off">
+        </div>
+        <div>
+          <label for="knowledge-text">Tekstfragment</label>
+          <textarea id="knowledge-text" name="raw_text"></textarea>
+        </div>
+        <button type="submit">Sla kennisfragment op</button>
+      </form>"""
+
+
+def render_knowledge_document_table(documents: list[KnowledgeDocument]) -> str:
+    if not documents:
+        return '<p class="evidence-meta">Nog geen kennisfragmenten opgeslagen.</p>'
+    rows = "".join(render_knowledge_document_row(document) for document in documents)
+    return f"""
+          <table class="data-table">
+            <thead>
+              <tr><th>Titel</th><th>Bron</th><th>Scope</th><th>Tags</th><th>Chunks</th><th>Fragment</th></tr>
+            </thead>
+            <tbody>{rows}</tbody>
+          </table>"""
+
+
+def render_knowledge_document_row(document: KnowledgeDocument) -> str:
+    source_label = SOURCE_TYPE_LABELS.get(document.source_type, document.source_type)
+    date_label = f"<br>{html.escape(document.publication_date)}" if document.publication_date else ""
+    path_label = ""
+    if document.source_path:
+        path = html.escape(document.source_path)
+        path_label = f'<br><a href="{path}" target="_blank" rel="noreferrer">bron</a>' if document.source_path.startswith(("http://", "https://")) else f"<br>{path}"
+    scope = knowledge_scope_from_tags(document.source_type, document.tags)
+    tag_label = ", ".join(document.tags) if document.tags else "n.b."
+    excerpt = document.raw_text[:220].strip()
+    if len(document.raw_text) > 220:
+        excerpt += "..."
+    return f"""
+        <tr>
+          <td><strong>{html.escape(document.title)}</strong></td>
+          <td>{html.escape(source_label)}{date_label}{path_label}</td>
+          <td>{html.escape(scope.label)}</td>
+          <td>{html.escape(tag_label)}</td>
+          <td>{document.chunk_count}</td>
+          <td>{html.escape(excerpt)}</td>
+        </tr>"""
+
+
+def _knowledge_scope_counts(documents: list[KnowledgeDocument]) -> dict[str, int]:
+    counts = {"general": 0, "symbol": 0, "sector": 0, "theme": 0}
+    for document in documents:
+        scope = knowledge_scope_from_tags(document.source_type, document.tags)
+        counts[scope.kind] = counts.get(scope.kind, 0) + 1
+    return counts
 
 
 def render_v1_status_dashboard(
@@ -1674,6 +1853,35 @@ def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) ->
         raise ValueError("CSV-pad is verplicht.")
     result = import_portfolio_csv(repository, Path(csv_path))
     return result.summary
+
+
+def save_knowledge_document_workflow(repository: SQLiteRepository, params: dict) -> str:
+    title = _first_param(params, "title")
+    source_type = (_first_param(params, "source_type") or "eigen_notitie").lower().replace(" ", "_")
+    publication_date = _first_param(params, "publication_date") or None
+    source_path = _first_param(params, "source_path") or None
+    raw_text = _first_param(params, "raw_text")
+    scope_type = _first_param(params, "scope_type") or "algemeen"
+    scope_value = _first_param(params, "scope_value")
+    extra_tags = _first_param(params, "tags")
+
+    if not title:
+        raise ValueError("Titel is verplicht.")
+    if not raw_text:
+        raise ValueError("Tekstfragment is verplicht.")
+    if publication_date:
+        _required_iso_date(publication_date)
+    tags = build_knowledge_tags(scope_type, scope_value, extra_tags)
+    document_id = repository.add_document(
+        title=title,
+        source_type=source_type,
+        raw_text=raw_text,
+        author="Handmatig ingevoerd",
+        publication_date=publication_date,
+        source_path=source_path,
+        tags=tags,
+    )
+    return f"Kennisfragment opgeslagen: {title} (document {document_id})."
 
 
 def update_peer_candidate_status_workflow(repository: SQLiteRepository, params: dict) -> str:
@@ -2563,13 +2771,14 @@ def render_score_block(label: str, value: float, details: list[str]) -> str:
 
 def render_evidence_item(hit) -> str:
     date = f", {hit.publication_date}" if hit.publication_date else ""
+    scope = knowledge_scope_from_tags(hit.source_type, hit.chunk.tags)
     excerpt = hit.chunk.text[:520].strip()
     if len(hit.chunk.text) > 520:
         excerpt += "..."
     return f"""
     <article class="evidence-item">
       <p class="evidence-title">{html.escape(hit.title)}</p>
-      <p class="evidence-meta">{html.escape(hit.source_type)}{html.escape(date)} - score {hit.score:.2f}</p>
+      <p class="evidence-meta">{html.escape(hit.source_type)}{html.escape(date)} - {html.escape(scope.label)} - score {hit.score:.2f}</p>
       <p class="evidence-text">{html.escape(excerpt)}</p>
     </article>"""
 
