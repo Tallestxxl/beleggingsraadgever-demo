@@ -419,7 +419,7 @@ class WebTests(unittest.TestCase):
             self.assertIn("Identiteit", html)
             self.assertIn("Koersdata", html)
             self.assertIn("Analyseer", html)
-            self.assertIn("Zoek peers", html)
+            self.assertIn("Zoek peer-kandidaten", html)
             self.assertIn("Open V1-status", build_page("DEMO", Advisor(repo).analyze("DEMO"), repository=repo))
 
     def test_portfolio_csv_workflow_imports_file_path(self) -> None:

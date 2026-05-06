@@ -920,7 +920,7 @@ def render_v1_status_dashboard(
         </div>
         <form method="post" action="/status/refresh-peers">
           <input type="hidden" name="symbol" value="__ALL__">
-          <button type="submit">Herbereken peers</button>
+          <button type="submit">Herbereken alle peer-kandidaten</button>
         </form>
       </div>
       {render_v1_status_table(rows)}
@@ -971,7 +971,7 @@ def render_v1_status_actions(symbol: str) -> str:
               </form>
               <form method="post" action="/status/refresh-peers">
                 <input type="hidden" name="symbol" value="{escaped_symbol}">
-                <button type="submit">Zoek peers</button>
+                <button type="submit">Zoek peer-kandidaten</button>
               </form>
             </div>"""
 

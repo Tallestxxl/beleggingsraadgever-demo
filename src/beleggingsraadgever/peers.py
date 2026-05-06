@@ -36,13 +36,25 @@ PEERS_BY_SYMBOL = {
 }
 
 PEERS_BY_THEME = {
+    "Dutch quality industrials": ["AALB", "TKH GROUP", "NEDAP"],
     "Semiconductor equipment": ["ASML", "ASMI", "BESI", "LAM RESEARCH", "TSMI", "NVIDIA"],
     "Oil and gas": ["SHELL", "BP", "CHEVRON"],
-    "Steel and metals": ["APERAM"],
+    "Steel and metals": ["APERAM", "OUTOKUMPU", "ARCELORMITTAL", "NUCOR", "STEEL DYNAMICS"],
+    "Chemicals": ["AKZA", "BASF", "COVESTRO", "LANXESS", "ARKEMA"],
+    "Energy transition": ["ALFEN", "EBUS", "VESTAS", "ORSTED", "ENPHASE", "SOLAREDGE"],
+    "Biobased materials": ["AVTX", "CORBION", "DSM FIRMENICH"],
+    "Construction": ["BAMNB", "HEIJMANS", "VINCI", "BOUYGUES", "EIFFAGE", "ACS", "FERROVIAL", "SKANSKA"],
+    "Ingredients": ["CRBN", "DSM FIRMENICH", "KERRY GROUP", "INGREDION"],
     "Health and nutrition": ["DSM FIRMENICH", "CORBION", "UNILEVER"],
     "Global consumer staples": ["UNILEVER", "DSM FIRMENICH", "CORBION"],
     "Offshore services": ["FUGRO", "SBMO", "SUBC", "CGG"],
     "Technology hardware": ["NEDAP", "TKH GROUP"],
+    "Staffing": ["RAND", "ADECCO", "MANPOWERGROUP", "ROBERT HALF"],
+    "Telecom": ["KPN", "DEUTSCHE TELEKOM", "ORANGE", "VODAFONE"],
+    "Space": ["LUNR", "RKLB", "RDW", "IRDM"],
+    "Broad US equities": ["INVESCO_RAFI_US", "SPY", "IVV", "VOO", "VTI"],
+    "Global equities": ["VWRL", "VWCE", "ACWI", "URTH"],
+    "Healthcare equities": ["XDWH", "IXJ", "XLV"],
 }
 
 

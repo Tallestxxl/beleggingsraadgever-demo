@@ -366,6 +366,20 @@ class AdvisorTests(unittest.TestCase):
             self.assertEqual(report.peer_analysis.configured_peer_count, 2)
             self.assertNotIn("CUSTOM_D", [row.symbol for row in report.peer_analysis.rows])
 
+    def test_peer_discovery_uses_generic_theme_seed_list_for_construction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+
+            candidates = refresh_peer_candidates(repo, "BAMNB")
+            peer_symbols = {candidate.peer_symbol for candidate in candidates}
+            sources = {candidate.source for candidate in candidates}
+
+            self.assertIn("HEIJMANS", peer_symbols)
+            self.assertIn("VINCI", peer_symbols)
+            self.assertIn("curated_theme", sources)
+            self.assertNotIn("BAMNB", peer_symbols)
+
     def test_peer_analysis_rejects_alias_and_wrong_curated_group_even_with_stale_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")
