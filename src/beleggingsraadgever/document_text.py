@@ -90,7 +90,7 @@ def _ocr_pdf(path: Path) -> str:
             str(path),
             str(output_pdf),
         ]
-        result = subprocess.run(command, text=True, capture_output=True, timeout=240)
+        result = subprocess.run(command, text=True, capture_output=True, timeout=240, env=_tool_env(ocrmypdf))
         if result.returncode != 0:
             raise ValueError(_ocr_error("OCRmyPDF", result.stderr))
         text = sidecar.read_text(encoding="utf-8", errors="ignore").strip() if sidecar.exists() else ""
@@ -109,7 +109,7 @@ def _ocr_image(path: Path) -> str:
     ]
     last_error = ""
     for command in attempts:
-        result = subprocess.run(command, text=True, capture_output=True, timeout=120)
+        result = subprocess.run(command, text=True, capture_output=True, timeout=120, env=_tool_env(tesseract))
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
         last_error = result.stderr
@@ -120,7 +120,49 @@ def _tool_path(name: str, env_var: str) -> str | None:
     override = os.environ.get(env_var, "").strip()
     if override:
         return override
-    return shutil.which(name)
+    found = shutil.which(name)
+    if found:
+        return found
+    for candidate in _common_tool_paths(name):
+        if candidate.exists():
+            return str(candidate)
+    return None
+
+
+def _common_tool_paths(name: str) -> list[Path]:
+    home = Path.home()
+    return [
+        home / "opt" / "anaconda3" / "bin" / name,
+        home / "anaconda3" / "bin" / name,
+        Path("/opt/homebrew/bin") / name,
+        Path("/usr/local/bin") / name,
+    ]
+
+
+def _tool_env(tool_path: str) -> dict[str, str]:
+    env = os.environ.copy()
+    path = Path(tool_path)
+    if path.is_absolute():
+        current_path = env.get("PATH", "")
+        env["PATH"] = f"{path.parent}{os.pathsep}{current_path}" if current_path else str(path.parent)
+        if not env.get("TESSDATA_PREFIX"):
+            tessdata_dir = _tessdata_dir(path)
+            if tessdata_dir:
+                env["TESSDATA_PREFIX"] = str(tessdata_dir)
+    return env
+
+
+def _tessdata_dir(tool_path: Path) -> Path | None:
+    candidates = [
+        tool_path.parent.parent / "share" / "tessdata",
+        tool_path.parent / "tessdata",
+        Path("/opt/homebrew/share/tessdata"),
+        Path("/usr/local/share/tessdata"),
+    ]
+    for candidate in candidates:
+        if (candidate / "eng.traineddata").exists():
+            return candidate
+    return None
 
 
 def _ocr_error(tool_name: str, stderr: str) -> str:
