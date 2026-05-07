@@ -189,6 +189,19 @@ class KnowledgeHit:
 
 
 @dataclass(frozen=True)
+class EvidenceDiagnostics:
+    query: str = ""
+    accepted_symbols: List[str] = field(default_factory=list)
+    sector: str = ""
+    theme: str = ""
+    trusted_hits_considered: int = 0
+    selected_count: int = 0
+    scope_counts: Dict[str, int] = field(default_factory=dict)
+    warnings: List[str] = field(default_factory=list)
+    max_age_months: int = 18
+
+
+@dataclass(frozen=True)
 class KnowledgeDocument:
     document_id: int
     title: str
@@ -292,3 +305,4 @@ class AdviceReport:
     data_sources: List[DataSource] = field(default_factory=list)
     portfolio_fit: Optional[PortfolioFit] = None
     peer_analysis: Optional[PeerAnalysis] = None
+    evidence_diagnostics: Optional[EvidenceDiagnostics] = None

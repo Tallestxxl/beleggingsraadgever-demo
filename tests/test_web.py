@@ -544,6 +544,38 @@ class WebTests(unittest.TestCase):
                     },
                 )
 
+    def test_analysis_renders_evidence_diagnostics_and_actions(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            seed_demo(repo)
+            repo.add_document(
+                title="DEMO oud aandeelbewijs",
+                source_type="educatie",
+                raw_text=(
+                    "DEMO waardering marge vrije kasstroom schuld dividend buybacks risico kwaliteit. "
+                    "Deze passage is aandeel-specifiek bewijs voor de analyse."
+                ),
+                publication_date="2024-01-01",
+                tags=["DEMO", "scope:aandeel"],
+                status="vertrouwd",
+            )
+
+            report = Advisor(repo).analyze("DEMO")
+            html = build_page(symbol="DEMO", report=report, repository=repo)
+
+            self.assertIn("DEMO oud aandeelbewijs", html)
+            self.assertIn("Bewijsdiagnose", html)
+            self.assertIn("Zoekcontext", html)
+            self.assertIn("Waarom gekozen?", html)
+            self.assertIn("Scope-regel", html)
+            self.assertIn("Matchende termen", html)
+            self.assertIn("Zet terug naar voorgesteld", html)
+            self.assertIn("Verwerp document", html)
+            self.assertIn("/knowledge?status=vertrouwd&amp;scope_type=aandeel&amp;scope_value=DEMO", html)
+            self.assertIn("ouder dan 18 maanden", html)
+
     def test_knowledge_import_reads_text_file_path(self) -> None:
         import tempfile
 

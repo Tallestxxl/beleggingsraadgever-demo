@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import List, Optional
 
 from .formatting import format_currency
 from .identity import aliases_for_data_sources, candidate_portfolio_symbols, normalize_symbol
 from .indicators import build_score, conviction_from_score, verdict_from_score
 from .knowledge_scope import knowledge_scope_from_tags, scope_matches_analysis
-from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeHit, MarketSnapshot, PortfolioFit
+from .models import AdviceReport, DataSource, EvidenceDiagnostics, FinancialSnapshot, KnowledgeHit, MarketSnapshot, PortfolioFit
 from .peers import SnapshotPair, build_peer_analysis
 from .portfolio import effective_classification, exposure_buckets, portfolio_position_exposures
 from .storage import SQLiteRepository
@@ -53,7 +54,9 @@ class Advisor:
         score = build_score(financial, market)
         verdict = verdict_from_score(score)
         conviction = conviction_from_score(score)
-        evidence = evidence if evidence is not None else self._retrieve_evidence(normalized_symbol, financial, market)
+        evidence_diagnostics = None
+        if evidence is None:
+            evidence, evidence_diagnostics = self._retrieve_evidence(normalized_symbol, financial, market)
         data_sources = (
             data_sources if data_sources is not None else self.repository.data_sources_for_symbol(normalized_symbol)
         )
@@ -93,6 +96,7 @@ class Advisor:
             data_sources=data_sources,
             portfolio_fit=portfolio_fit,
             peer_analysis=peer_analysis,
+            evidence_diagnostics=evidence_diagnostics,
         )
 
     def render_markdown(self, report: AdviceReport) -> str:
@@ -397,7 +401,7 @@ class Advisor:
         symbol: str,
         financial: FinancialSnapshot,
         market: MarketSnapshot,
-    ) -> List[KnowledgeHit]:
+    ) -> tuple[List[KnowledgeHit], EvidenceDiagnostics]:
         query_parts = [
             symbol,
             "waardering marge vrije kasstroom schuld dividend buybacks risico kwaliteit",
@@ -411,7 +415,8 @@ class Advisor:
 
         accepted_symbols = self._accepted_evidence_symbols(symbol)
         classification = effective_classification(self.repository, symbol)
-        hits = self.repository.search_knowledge(" ".join(query_parts), limit=50)
+        query = " ".join(query_parts)
+        hits = self.repository.search_knowledge(query, limit=50)
         evidence: list[KnowledgeHit] = []
         seen_sources: set[tuple[str, str]] = set()
         for hit in hits:
@@ -429,7 +434,14 @@ class Advisor:
             evidence.append(hit)
             if len(evidence) >= 5:
                 break
-        return evidence
+        return evidence, _build_evidence_diagnostics(
+            query=query,
+            accepted_symbols=accepted_symbols,
+            sector=classification.sector,
+            theme=classification.theme,
+            trusted_hits_considered=len(hits),
+            evidence=evidence,
+        )
 
     def _accepted_evidence_symbols(self, symbol: str) -> set[str]:
         accepted = {normalize_symbol(symbol)}
@@ -521,6 +533,55 @@ def _knowledge_hit_matches_analysis(
         sector=sector,
         theme=theme,
     )
+
+
+def _build_evidence_diagnostics(
+    *,
+    query: str,
+    accepted_symbols: set[str],
+    sector: str,
+    theme: str,
+    trusted_hits_considered: int,
+    evidence: list[KnowledgeHit],
+) -> EvidenceDiagnostics:
+    scope_counts: dict[str, int] = {"general": 0, "symbol": 0, "sector": 0, "theme": 0}
+    old_count = 0
+    today = date.today()
+    for hit in evidence:
+        scope = knowledge_scope_from_tags(hit.source_type, hit.chunk.tags)
+        scope_counts[scope.kind] = scope_counts.get(scope.kind, 0) + 1
+        if _knowledge_hit_is_older_than_months(hit, today=today, months=18):
+            old_count += 1
+
+    warnings: list[str] = []
+    if not evidence:
+        warnings.append("Geen vertrouwde kennisfragmenten gevonden die door de scope-regels kwamen.")
+    elif scope_counts.get("general", 0) == len(evidence):
+        warnings.append("Alle gebruikte kennis is algemeen; er is geen aandeel-, sector- of thema-specifiek bewijs gebruikt.")
+    if old_count:
+        warnings.append(f"{old_count} van {len(evidence)} gebruikte kennisfragmenten is ouder dan 18 maanden.")
+
+    return EvidenceDiagnostics(
+        query=query,
+        accepted_symbols=sorted(accepted_symbols),
+        sector=sector,
+        theme=theme,
+        trusted_hits_considered=trusted_hits_considered,
+        selected_count=len(evidence),
+        scope_counts=scope_counts,
+        warnings=warnings,
+        max_age_months=18,
+    )
+
+
+def _knowledge_hit_is_older_than_months(hit: KnowledgeHit, *, today: date, months: int) -> bool:
+    if not hit.publication_date:
+        return False
+    try:
+        published = date.fromisoformat(hit.publication_date)
+    except ValueError:
+        return False
+    return (today.year - published.year) * 12 + today.month - published.month > months
 
 
 def _transaction_rationale(

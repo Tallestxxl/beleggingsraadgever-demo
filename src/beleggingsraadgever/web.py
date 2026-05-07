@@ -27,7 +27,7 @@ from .importer import (
     validate_company_snapshot,
     write_snapshot_template,
 )
-from .knowledge import chunk_text
+from .knowledge import chunk_text, tokenize
 from .knowledge_scope import build_knowledge_tags, knowledge_scope_from_tags
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
 from .classification import classify_company, classify_symbol
@@ -777,12 +777,13 @@ def _make_handler(repository: SQLiteRepository):
                 return
 
             if parsed.path == "/knowledge/status":
+                return_to = safe_return_path(_first_param(params, "return_to"))
                 try:
                     message = update_knowledge_document_status_workflow(repository, params)
                 except ValueError as error:
-                    self._redirect(f"/knowledge?message={quote_plus(str(error))}")
+                    self._redirect(redirect_with_message(return_to or "/knowledge", str(error)))
                     return
-                self._redirect(f"/knowledge?message={quote_plus(message)}")
+                self._redirect(redirect_with_message(return_to or "/knowledge", message))
                 return
 
             if parsed.path == "/portfolio/profile":
@@ -1392,11 +1393,13 @@ def render_knowledge_status_actions(document: KnowledgeDocument) -> str:
     return f'<div class="status-actions">{"".join(buttons)}</div>'
 
 
-def render_knowledge_status_form(document_id: int, status: str, label: str) -> str:
+def render_knowledge_status_form(document_id: int, status: str, label: str, return_to: str = "") -> str:
+    return_field = f'<input type="hidden" name="return_to" value="{html.escape(return_to)}">' if return_to else ""
     return f"""
               <form method="post" action="/knowledge/status">
                 <input type="hidden" name="document_id" value="{document_id}">
                 <input type="hidden" name="status" value="{html.escape(status)}">
+                {return_field}
                 <button type="submit">{html.escape(label)}</button>
               </form>"""
 
@@ -2845,6 +2848,20 @@ def _first_param(params: dict, name: str) -> str:
     return values[0].strip() if values else ""
 
 
+def safe_return_path(value: str) -> str:
+    if not value or not value.startswith("/") or value.startswith("//"):
+        return ""
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc:
+        return ""
+    return value
+
+
+def redirect_with_message(path: str, message: str) -> str:
+    separator = "&" if "?" in path else "?"
+    return f"{path}{separator}message={quote_plus(message)}"
+
+
 def _parse_optional_float(value: str, label: str) -> Optional[float]:
     if not value:
         return None
@@ -3317,9 +3334,10 @@ def render_report(report: AdviceReport, v1_status: Optional[V1StatusRow] = None)
           <ul class="risk-list">{''.join(f'<li>{html.escape(flag)}</li>' for flag in report.score.flags)}</ul>
         </section>"""
 
-    evidence = "".join(render_evidence_item(hit) for hit in report.evidence)
+    evidence = "".join(render_evidence_item(hit, report) for hit in report.evidence)
     if not evidence:
         evidence = '<p class="evidence-meta">Geen relevante fragmenten gevonden in de lokale kennisbank.</p>'
+    evidence_diagnostics = render_evidence_diagnostics(report)
     peer_analysis = render_peer_analysis(report)
 
     freshness = "".join(
@@ -3412,6 +3430,7 @@ def render_report(report: AdviceReport, v1_status: Optional[V1StatusRow] = None)
         {flags}
         <section>
           <h3>Relevante kennisbank-fragmenten</h3>
+          {evidence_diagnostics}
           <div class="evidence-list">{evidence}</div>
         </section>
       </div>
@@ -3509,18 +3528,142 @@ def render_score_block(label: str, value: float, details: list[str]) -> str:
     </div>"""
 
 
-def render_evidence_item(hit) -> str:
+def render_evidence_diagnostics(report: AdviceReport) -> str:
+    diagnostics = report.evidence_diagnostics
+    if diagnostics is None:
+        return ""
+    scope_labels = {
+        "symbol": "Aandeel",
+        "sector": "Sector",
+        "theme": "Thema",
+        "general": "Algemeen",
+    }
+    scope_items = "".join(
+        f"<li>{html.escape(scope_labels.get(scope, scope))}: {diagnostics.scope_counts.get(scope, 0)}</li>"
+        for scope in ("symbol", "sector", "theme", "general")
+        if diagnostics.scope_counts.get(scope, 0)
+    )
+    if not scope_items:
+        scope_items = "<li>Geen geselecteerde fragmenten.</li>"
+    warning_items = "".join(f"<li>{html.escape(warning)}</li>" for warning in diagnostics.warnings)
+    warning_block = f'<ul class="risk-list">{warning_items}</ul>' if warning_items else ""
+    accepted = ", ".join(diagnostics.accepted_symbols[:8]) or report.symbol
+    context_items = [
+        f"Vertrouwde hits bekeken: {diagnostics.trusted_hits_considered}",
+        f"Gebruikt in analyse: {diagnostics.selected_count}",
+        f"Toegestane aandelen/aliassen: {accepted}",
+    ]
+    if diagnostics.sector and diagnostics.sector != "Onbekend":
+        context_items.append(f"Sectorregel: {diagnostics.sector}")
+    if diagnostics.theme and diagnostics.theme != "Onbekend":
+        context_items.append(f"Themaregel: {diagnostics.theme}")
+    context_list = "".join(f"<li>{html.escape(item)}</li>" for item in context_items)
+    return f"""
+          <details class="supporting-detail" open>
+            <summary>Bewijsdiagnose</summary>
+            <p class="evidence-meta">Zoekcontext: {html.escape(diagnostics.query)}</p>
+            <ul class="data-list">{context_list}</ul>
+            <p class="evidence-meta">Verdeling gebruikt bewijs</p>
+            <ul class="data-list">{scope_items}</ul>
+            {warning_block}
+          </details>"""
+
+
+def render_evidence_item(hit, report: AdviceReport) -> str:
     date = f", {hit.publication_date}" if hit.publication_date else ""
     scope = knowledge_scope_from_tags(hit.source_type, hit.chunk.tags)
     excerpt = hit.chunk.text[:520].strip()
     if len(hit.chunk.text) > 520:
         excerpt += "..."
+    diagnostics = report.evidence_diagnostics
+    query = diagnostics.query if diagnostics is not None else ""
+    scope_rule = evidence_scope_rule(scope, diagnostics)
+    matching_terms = evidence_matching_terms(hit, query)
+    match_label = ", ".join(matching_terms) if matching_terms else "Geen directe termhighlight; score komt uit vectoroverlap."
+    tags_label = ", ".join(hit.chunk.tags) if hit.chunk.tags else "n.b."
+    knowledge_filter = knowledge_filter_url_for_scope(scope)
+    actions = render_evidence_actions(hit, report.symbol)
     return f"""
     <article class="evidence-item">
       <p class="evidence-title">{html.escape(hit.title)}</p>
       <p class="evidence-meta">{html.escape(hit.source_type)}{html.escape(date)} - {html.escape(scope.label)} - score {hit.score:.2f}</p>
       <p class="evidence-text">{html.escape(excerpt)}</p>
+      <details class="score-detail">
+        <summary>Waarom gekozen?</summary>
+        <ul class="data-list">
+          <li>Zoekcontext: {html.escape(query or "n.b.")}</li>
+          <li>Scope-regel: {html.escape(scope_rule)}</li>
+          <li>Chunk: {hit.chunk.chunk_index + 1}; tags: {html.escape(tags_label)}</li>
+          <li>Matchende termen: {html.escape(match_label)}</li>
+        </ul>
+      </details>
+      <div class="button-row">
+        <a class="button secondary" href="{html.escape(knowledge_filter)}">Open in kennisbibliotheek</a>
+        {actions}
+      </div>
     </article>"""
+
+
+def evidence_scope_rule(scope, diagnostics) -> str:
+    if scope.kind == "general":
+        return "Algemene kennis mag altijd meewegen, maar krijgt een waarschuwing wanneer dit de enige bewijssoort is."
+    if scope.kind == "symbol":
+        accepted = ", ".join(diagnostics.accepted_symbols) if diagnostics is not None else ""
+        return f"Aandeel-specifiek; toegestaan wanneer {scope.value} in aliassen/tickers zit ({accepted})."
+    if scope.kind == "sector":
+        sector = diagnostics.sector if diagnostics is not None else ""
+        return f"Sector-specifiek; toegestaan wanneer scope {scope.value} overeenkomt met analyse-sector {sector}."
+    if scope.kind == "theme":
+        theme = diagnostics.theme if diagnostics is not None else ""
+        return f"Thema-specifiek; toegestaan wanneer scope {scope.value} overeenkomt met analyse-thema {theme}."
+    return "Onbekende scope; fragment is alleen getoond nadat de centrale scopefilter het toeliet."
+
+
+def evidence_matching_terms(hit, query: str) -> list[str]:
+    if not query:
+        return []
+    chunk_terms = set(tokenize(hit.chunk.text))
+    matches: list[str] = []
+    seen: set[str] = set()
+    for term in tokenize(query):
+        if len(term) < 4 or term in seen:
+            continue
+        seen.add(term)
+        if term in chunk_terms:
+            matches.append(term)
+        if len(matches) >= 10:
+            break
+    return matches
+
+
+def knowledge_filter_url_for_scope(scope) -> str:
+    scope_type = _scope_type_for_filter(scope.kind)
+    params = ["status=vertrouwd"]
+    if scope_type:
+        params.append(f"scope_type={quote_plus(scope_type)}")
+    if scope.value:
+        params.append(f"scope_value={quote_plus(scope.display_value or scope.value)}")
+    return "/knowledge?" + "&".join(params)
+
+
+def render_evidence_actions(hit, symbol: str) -> str:
+    document_id = hit.chunk.document_id
+    if not document_id:
+        return ""
+    return (
+        render_knowledge_status_form(
+            document_id,
+            "voorgesteld",
+            "Zet terug naar voorgesteld",
+            return_to=f"/analyze?symbol={quote_plus(symbol)}",
+        )
+        + render_knowledge_status_form(
+            document_id,
+            "verworpen",
+            "Verwerp document",
+            return_to=f"/analyze?symbol={quote_plus(symbol)}",
+        )
+    )
 
 
 def render_data_source_item(source) -> str:
