@@ -7,7 +7,8 @@ import hashlib
 import html
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from datetime import date, datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -83,6 +84,8 @@ class KnowledgeImportPreview:
     warnings: list[str]
     char_count: int
     word_count: int
+    source_paragraphs: list[str] = field(default_factory=list)
+    selection_summary: str = ""
 
 
 CSS = """
@@ -526,6 +529,39 @@ h3 {
 
 .evidence-text {
   margin: 6px 0 0;
+}
+
+.hidden-field {
+  display: none;
+}
+
+.paragraph-list {
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow: auto;
+  margin: 10px 0 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.paragraph-list li {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.paragraph-number {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.paragraph-text {
+  color: var(--ink);
+  font-size: 14px;
 }
 
 .data-table {
@@ -1146,6 +1182,7 @@ def render_knowledge_import_review(preview: KnowledgeImportPreview) -> str:
         <summary>Kwaliteitscontrole</summary>
         <ul class="workflow-list">{warning_items}</ul>
       </details>
+      {render_knowledge_passage_selector(preview)}
       <details class="supporting-detail" open>
         <summary>Voorbereide chunks</summary>
         <div class="evidence-list">{chunks}</div>
@@ -1154,6 +1191,79 @@ def render_knowledge_import_review(preview: KnowledgeImportPreview) -> str:
       <h3>Definitief opslaan</h3>
       {render_knowledge_import_form(metadata, action="/knowledge/import", button_label="Sla definitief op")}
     </section>"""
+
+
+def render_knowledge_passage_selector(preview: KnowledgeImportPreview) -> str:
+    metadata = preview.values
+    source_text = metadata.get("source_raw_text") or metadata.get("raw_text", "")
+    paragraph_items = "".join(render_knowledge_source_paragraph(index, paragraph) for index, paragraph in enumerate(preview.source_paragraphs, 1))
+    paragraph_help = "Gebruik bijvoorbeeld 3-8, 12 of begin-eind. Meerdere passages mogen met komma's of nieuwe regels."
+    return f"""
+      <details class="supporting-detail" open>
+        <summary>Passageselectie vóór chunking</summary>
+        <p class="evidence-meta">{html.escape(preview.selection_summary or "Hele tekst geselecteerd.")}</p>
+        <form class="knowledge-form" method="post" action="/knowledge/preview">
+          {render_knowledge_preview_hidden_fields(metadata, source_text)}
+          <div class="form-grid">
+            <div>
+              <label for="knowledge-passage-ranges">Paragraafbereik</label>
+              <input id="knowledge-passage-ranges" name="passage_ranges" type="text" value="{html.escape(metadata.get("passage_ranges", ""))}" autocomplete="off">
+              <p class="evidence-meta">{html.escape(paragraph_help)}</p>
+            </div>
+            <div>
+              <label for="knowledge-anchor-start">Eerste woorden</label>
+              <input id="knowledge-anchor-start" name="anchor_start" type="text" value="{html.escape(metadata.get("anchor_start", ""))}" autocomplete="off">
+            </div>
+          </div>
+          <div class="form-grid">
+            <div>
+              <label for="knowledge-anchor-end">Laatste woorden</label>
+              <input id="knowledge-anchor-end" name="anchor_end" type="text" value="{html.escape(metadata.get("anchor_end", ""))}" autocomplete="off">
+              <p class="evidence-meta">Laat beide ankers leeg wanneer je alleen paragraafbereiken gebruikt.</p>
+            </div>
+            <div>
+              <label for="knowledge-anchor-ranges">Extra ankerparen</label>
+              <textarea id="knowledge-anchor-ranges" name="anchor_ranges">{html.escape(metadata.get("anchor_ranges", ""))}</textarea>
+              <p class="evidence-meta">Een passage per regel: beginwoorden =&gt; eindwoorden.</p>
+            </div>
+          </div>
+          <button type="submit">Selectie toepassen</button>
+        </form>
+        <details class="supporting-detail">
+          <summary>Brontekst in paragrafen</summary>
+          <ol class="paragraph-list">{paragraph_items}</ol>
+        </details>
+      </details>"""
+
+
+def render_knowledge_preview_hidden_fields(metadata: dict[str, str], source_text: str) -> str:
+    names = [
+        "title",
+        "source_type",
+        "publication_date",
+        "source_path",
+        "file_path",
+        "scope_type",
+        "scope_value",
+        "tags",
+        "status",
+    ]
+    fields = "".join(
+        f'<input type="hidden" name="{name}" value="{html.escape(metadata.get(name, ""))}">' for name in names
+    )
+    fields += f'<textarea class="hidden-field" name="source_raw_text">{html.escape(source_text)}</textarea>'
+    return fields
+
+
+def render_knowledge_source_paragraph(index: int, paragraph: str) -> str:
+    excerpt = paragraph[:700].strip()
+    if len(paragraph) > 700:
+        excerpt += "..."
+    return f"""
+        <li>
+          <span class="paragraph-number">{index}</span>
+          <span class="paragraph-text">{html.escape(excerpt)}</span>
+        </li>"""
 
 
 def render_knowledge_chunk_preview(chunk: KnowledgeChunk) -> str:
@@ -2169,16 +2279,19 @@ def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) ->
 
 
 def build_knowledge_import_preview(repository: SQLiteRepository, params: dict) -> KnowledgeImportPreview:
-    values, tags = _prepare_knowledge_import(params)
+    values, tags = _prepare_knowledge_import(params, apply_passage_selection=True)
     chunks = chunk_text(values["raw_text"], document_id=0, tags=tags)
     warnings = _knowledge_import_warnings(repository, values, tags, chunks)
+    selection_warnings = [warning for warning in values.get("selection_warnings", "").split("\n") if warning]
     return KnowledgeImportPreview(
         values=values,
         tags=tags,
         chunks=chunks,
-        warnings=warnings,
+        warnings=[*selection_warnings, *warnings],
         char_count=len(values["raw_text"]),
         word_count=len(re.findall(r"\S+", values["raw_text"])),
+        source_paragraphs=split_knowledge_source_paragraphs(values.get("source_raw_text") or values["raw_text"]),
+        selection_summary=values.get("selection_summary", ""),
     )
 
 
@@ -2197,19 +2310,26 @@ def save_knowledge_document_workflow(repository: SQLiteRepository, params: dict)
     return f"Kennisfragment opgeslagen: {values['title']} (document {document_id})."
 
 
-def _prepare_knowledge_import(params: dict) -> tuple[dict[str, str], list[str]]:
+def _prepare_knowledge_import(params: dict, *, apply_passage_selection: bool = False) -> tuple[dict[str, str], list[str]]:
     title = _first_param(params, "title")
     raw_source_type = _first_param(params, "source_type")
     source_type = raw_source_type.lower().replace(" ", "_") if raw_source_type else ""
     publication_date = _first_param(params, "publication_date")
     source_path = _first_param(params, "source_path")
+    source_raw_text = _first_param(params, "source_raw_text")
     raw_text = _first_param(params, "raw_text")
     file_path = _first_param(params, "file_path")
     scope_type = _first_param(params, "scope_type")
     scope_value = _first_param(params, "scope_value")
     extra_tags = _first_param(params, "tags")
     status = _first_param(params, "status") or "voorgesteld"
+    passage_ranges = _first_param(params, "passage_ranges")
+    anchor_start = _first_param(params, "anchor_start")
+    anchor_end = _first_param(params, "anchor_end")
+    anchor_ranges = _first_param(params, "anchor_ranges")
 
+    if apply_passage_selection and source_raw_text:
+        raw_text = source_raw_text
     if file_path and not raw_text:
         raw_text = extract_text_from_file(Path(file_path))
     if not title and file_path:
@@ -2230,6 +2350,19 @@ def _prepare_knowledge_import(params: dict) -> tuple[dict[str, str], list[str]]:
         raise ValueError("Onbekende kennisstatus.")
     _required_iso_date(publication_date)
     tags = build_knowledge_tags(scope_type, scope_value, extra_tags)
+    selected_text = raw_text.strip()
+    selection_summary = "Hele tekst geselecteerd."
+    selection_warnings: list[str] = []
+    if apply_passage_selection:
+        selected_text, selection_warnings, selection_summary = select_knowledge_passages(
+            raw_text,
+            passage_ranges=passage_ranges,
+            anchor_start=anchor_start,
+            anchor_end=anchor_end,
+            anchor_ranges=anchor_ranges,
+        )
+        if not selected_text:
+            raise ValueError("Passageselectie leverde geen tekst op.")
     return (
         {
             "title": title.strip(),
@@ -2241,10 +2374,197 @@ def _prepare_knowledge_import(params: dict) -> tuple[dict[str, str], list[str]]:
             "scope_value": scope_value.strip(),
             "tags": extra_tags.strip(),
             "status": status.strip(),
-            "raw_text": raw_text.strip(),
+            "raw_text": selected_text.strip(),
+            "source_raw_text": raw_text.strip() if apply_passage_selection else "",
+            "passage_ranges": passage_ranges.strip(),
+            "anchor_start": anchor_start.strip(),
+            "anchor_end": anchor_end.strip(),
+            "anchor_ranges": anchor_ranges.strip(),
+            "selection_summary": selection_summary,
+            "selection_warnings": "\n".join(selection_warnings),
         },
         tags,
     )
+
+
+def split_knowledge_source_paragraphs(raw_text: str) -> list[str]:
+    text = raw_text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return []
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n+", text) if part.strip()]
+    if len(paragraphs) <= 1:
+        line_parts = [part.strip() for part in text.splitlines() if part.strip()]
+        if len(line_parts) > 1:
+            paragraphs = line_parts
+    if len(paragraphs) <= 1 and len(text) > 1000:
+        paragraphs = _split_text_into_sentence_blocks(text)
+    return paragraphs or [text]
+
+
+def select_knowledge_passages(
+    raw_text: str,
+    *,
+    passage_ranges: str = "",
+    anchor_start: str = "",
+    anchor_end: str = "",
+    anchor_ranges: str = "",
+) -> tuple[str, list[str], str]:
+    paragraphs = split_knowledge_source_paragraphs(raw_text)
+    selected_parts: list[str] = []
+    warnings: list[str] = []
+    summary_parts: list[str] = []
+
+    if passage_ranges.strip():
+        range_parts, range_warnings = _select_paragraph_ranges(paragraphs, passage_ranges)
+        selected_parts.extend(range_parts)
+        warnings.extend(range_warnings)
+        if range_parts:
+            summary_parts.append(f"Paragraafselectie: {passage_ranges.strip()}.")
+
+    anchor_specs: list[tuple[str, str]] = []
+    if anchor_start.strip() or anchor_end.strip():
+        anchor_specs.append((anchor_start.strip(), anchor_end.strip()))
+    anchor_specs.extend(_parse_anchor_range_lines(anchor_ranges))
+    for start_text, end_text in anchor_specs:
+        part, warning = _select_anchor_range(raw_text, start_text, end_text)
+        if warning:
+            warnings.append(warning)
+        if part:
+            selected_parts.append(part)
+            summary_parts.append("Ankerselectie toegepast.")
+
+    if not passage_ranges.strip() and not anchor_specs:
+        return raw_text.strip(), warnings, "Hele tekst geselecteerd."
+    if not selected_parts:
+        return "", warnings or ["Geen passage gevonden met deze selectie."], "Geen passage geselecteerd."
+    return "\n\n".join(_dedupe_passage_parts(selected_parts)).strip(), warnings, " ".join(summary_parts)
+
+
+def _split_text_into_sentence_blocks(text: str, target_chars: int = 900) -> list[str]:
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", text)) if part.strip()]
+    blocks: list[str] = []
+    current = ""
+    for sentence in sentences:
+        if current and len(current) + len(sentence) + 1 > target_chars:
+            blocks.append(current)
+            current = sentence
+        else:
+            current = f"{current} {sentence}".strip()
+    if current:
+        blocks.append(current)
+    return blocks or [text]
+
+
+def _select_paragraph_ranges(paragraphs: list[str], range_text: str) -> tuple[list[str], list[str]]:
+    selected: list[str] = []
+    warnings: list[str] = []
+    for raw_part in re.split(r"[,;\n]+", range_text):
+        part = raw_part.strip().lower()
+        if not part:
+            continue
+        if part in {"alles", "all", "begin-eind", "begin - eind", "begin:eind"}:
+            selected.extend(paragraphs)
+            continue
+        match = re.fullmatch(r"(begin|\d+)\s*(?:-|:|t/m|tot)\s*(eind|\d+)", part)
+        if match:
+            start = 1 if match.group(1) == "begin" else int(match.group(1))
+            end = len(paragraphs) if match.group(2) == "eind" else int(match.group(2))
+        elif re.fullmatch(r"\d+", part):
+            start = end = int(part)
+        else:
+            warnings.append(f"Paragraafbereik '{raw_part.strip()}' is niet herkend.")
+            continue
+        if start > end:
+            start, end = end, start
+        if start < 1 or end > len(paragraphs):
+            warnings.append(f"Paragraafbereik '{raw_part.strip()}' valt buiten 1-{len(paragraphs)}.")
+            continue
+        selected.extend(paragraphs[start - 1 : end])
+    return selected, warnings
+
+
+def _parse_anchor_range_lines(anchor_ranges: str) -> list[tuple[str, str]]:
+    ranges: list[tuple[str, str]] = []
+    for line in anchor_ranges.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "=>" in line:
+            start, end = line.split("=>", 1)
+        elif "->" in line:
+            start, end = line.split("->", 1)
+        elif "|" in line:
+            start, end = line.split("|", 1)
+        else:
+            continue
+        ranges.append((start.strip(), end.strip()))
+    return ranges
+
+
+def _select_anchor_range(raw_text: str, start_anchor: str, end_anchor: str) -> tuple[str, str]:
+    start_index = 0
+    end_index = len(raw_text)
+    if start_anchor and start_anchor.strip().lower() not in {"begin", "start"}:
+        found_start = _find_anchor(raw_text, start_anchor, start=0, return_end=False)
+        if found_start is None:
+            return "", f"Beginanker '{start_anchor}' is niet gevonden."
+        start_index = found_start
+    if end_anchor and end_anchor.strip().lower() not in {"eind", "end"}:
+        found_end = _find_anchor(raw_text, end_anchor, start=start_index, return_end=True)
+        if found_end is None:
+            return "", f"Eindanker '{end_anchor}' is niet gevonden."
+        end_index = found_end
+    if start_index >= end_index:
+        return "", "Ankerselectie heeft een lege passage opgeleverd."
+    return raw_text[start_index:end_index].strip(), ""
+
+
+def _find_anchor(raw_text: str, anchor: str, *, start: int = 0, return_end: bool = False) -> Optional[int]:
+    anchor = re.sub(r"\s+", " ", anchor.strip())
+    if not anchor:
+        return start if not return_end else len(raw_text)
+    pattern = re.escape(anchor).replace(r"\ ", r"\s+")
+    match = re.search(pattern, raw_text[start:], flags=re.IGNORECASE)
+    if match:
+        return start + (match.end() if return_end else match.start())
+    return _find_anchor_fuzzy(raw_text, anchor, start=start, return_end=return_end)
+
+
+def _find_anchor_fuzzy(raw_text: str, anchor: str, *, start: int = 0, return_end: bool = False) -> Optional[int]:
+    anchor_words = re.findall(r"\S+", anchor)
+    if not anchor_words:
+        return None
+    window_size = len(anchor_words)
+    tokens = list(re.finditer(r"\S+", raw_text[start:]))
+    best_score = 0.0
+    best_range: Optional[tuple[int, int]] = None
+    target = _normalize_anchor_text(anchor)
+    for index in range(0, max(0, len(tokens) - window_size + 1)):
+        window_tokens = tokens[index : index + window_size]
+        candidate = _normalize_anchor_text(" ".join(token.group(0) for token in window_tokens))
+        score = SequenceMatcher(None, target, candidate).ratio()
+        if score > best_score:
+            best_score = score
+            best_range = (start + window_tokens[0].start(), start + window_tokens[-1].end())
+    if best_range is None or best_score < 0.78:
+        return None
+    return best_range[1] if return_end else best_range[0]
+
+
+def _normalize_anchor_text(value: str) -> str:
+    return re.sub(r"\W+", "", value.casefold())
+
+
+def _dedupe_passage_parts(parts: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for part in parts:
+        cleaned = part.strip()
+        key = re.sub(r"\s+", " ", cleaned).casefold()
+        if cleaned and key not in seen:
+            seen.add(key)
+            result.append(cleaned)
+    return result
 
 
 def _knowledge_import_warnings(

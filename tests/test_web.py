@@ -442,14 +442,89 @@ class WebTests(unittest.TestCase):
             self.assertEqual(preview.values["title"], "aperam-scan")
             self.assertEqual(preview.tags[:2], ["APERAM", "scope:aandeel"])
             self.assertGreaterEqual(len(preview.chunks), 1)
+            self.assertIn("Hele tekst geselecteerd", preview.selection_summary)
             html = build_knowledge_page(repo, preview=preview)
             self.assertIn("Importcontrole", html)
+            self.assertIn("Passageselectie", html)
+            self.assertIn("Brontekst in paragrafen", html)
             self.assertIn("Voorbereide chunks", html)
             self.assertIn("Sla definitief op", html)
 
             message = save_knowledge_document_workflow(repo, {key: [value] for key, value in preview.values.items()})
             self.assertIn("Kennisfragment opgeslagen", message)
             self.assertEqual(len(repo.list_knowledge_documents()), 1)
+
+    def test_knowledge_import_preview_selects_paragraph_ranges_before_chunking(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            source_path = Path(tmp) / "bb-column.txt"
+            source_path.write_text(
+                "\n\n".join(
+                    [
+                        "Ruis bovenaan met advertentie en paginakop.",
+                        "Aperam relevante passage over dividend en vrije kasstroom.",
+                        "Tweede relevante passage over schuld en cycliciteit.",
+                        "Ruis onderaan met colofon en voetregel.",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            preview = build_knowledge_import_preview(
+                repo,
+                {
+                    "title": ["Aperam selectie"],
+                    "source_type": ["beleggers_belangen"],
+                    "publication_date": ["2026-05-06"],
+                    "scope_type": ["aandeel"],
+                    "scope_value": ["APERAM"],
+                    "file_path": [str(source_path)],
+                    "passage_ranges": ["2-3"],
+                },
+            )
+
+            self.assertIn("vrije kasstroom", preview.values["raw_text"])
+            self.assertIn("schuld en cycliciteit", preview.values["raw_text"])
+            self.assertNotIn("Ruis bovenaan", preview.values["raw_text"])
+            self.assertNotIn("Ruis onderaan", preview.values["raw_text"])
+            self.assertEqual(len(preview.source_paragraphs), 4)
+            self.assertIn("Paragraafselectie: 2-3", preview.selection_summary)
+
+    def test_knowledge_import_preview_selects_anchor_ranges_before_chunking(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            raw_text = (
+                "Koptekst en ruis. "
+                "Eerste relevante woorden dividend moet door vrije kasstroom worden gedragen. "
+                "Dit is de inhoudelijke passage voor Aperam. "
+                "Laatste relevante woorden discipline bij cycliciteit. "
+                "Voettekst en ruis."
+            )
+
+            preview = build_knowledge_import_preview(
+                repo,
+                {
+                    "title": ["Aperam ankers"],
+                    "source_type": ["beleggers_belangen"],
+                    "publication_date": ["2026-05-06"],
+                    "scope_type": ["aandeel"],
+                    "scope_value": ["APERAM"],
+                    "raw_text": [raw_text],
+                    "anchor_start": ["Eerste relevante woorden"],
+                    "anchor_end": ["Laatste relevante woorden"],
+                },
+            )
+
+            self.assertTrue(preview.values["raw_text"].startswith("Eerste relevante woorden"))
+            self.assertTrue(preview.values["raw_text"].endswith("Laatste relevante woorden"))
+            self.assertNotIn("Koptekst", preview.values["raw_text"])
+            self.assertNotIn("Voettekst", preview.values["raw_text"])
 
     def test_knowledge_import_requires_publication_date(self) -> None:
         import tempfile
