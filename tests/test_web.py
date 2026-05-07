@@ -16,6 +16,7 @@ from beleggingsraadgever.web import (
     SnapshotWorkflow,
     archive_imported_snapshot,
     build_draft_report,
+    build_knowledge_import_preview,
     build_knowledge_page,
     build_page,
     build_portfolio_page,
@@ -412,6 +413,61 @@ class WebTests(unittest.TestCase):
             rejected_html = build_knowledge_page(repo, filters={"status": ["verworpen"]})
             self.assertIn("Aperam dividend", trusted_html)
             self.assertNotIn("Aperam dividend", rejected_html)
+
+    def test_knowledge_import_preview_does_not_save_until_confirmed(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            source_path = Path(tmp) / "aperam-scan.txt"
+            source_path.write_text(
+                "Aperam moet het dividend blijven dekken met vrije kasstroom en lage schuld. " * 8,
+                encoding="utf-8",
+            )
+
+            preview = build_knowledge_import_preview(
+                repo,
+                {
+                    "source_type": ["beleggers_belangen"],
+                    "publication_date": ["2026-05-06"],
+                    "scope_type": ["aandeel"],
+                    "scope_value": ["APERAM"],
+                    "file_path": [str(source_path)],
+                    "tags": ["dividend"],
+                },
+            )
+
+            self.assertEqual(repo.list_knowledge_documents(), [])
+            self.assertEqual(preview.values["title"], "aperam-scan")
+            self.assertEqual(preview.tags[:2], ["APERAM", "scope:aandeel"])
+            self.assertGreaterEqual(len(preview.chunks), 1)
+            html = build_knowledge_page(repo, preview=preview)
+            self.assertIn("Importcontrole", html)
+            self.assertIn("Voorbereide chunks", html)
+            self.assertIn("Sla definitief op", html)
+
+            message = save_knowledge_document_workflow(repo, {key: [value] for key, value in preview.values.items()})
+            self.assertIn("Kennisfragment opgeslagen", message)
+            self.assertEqual(len(repo.list_knowledge_documents()), 1)
+
+    def test_knowledge_import_requires_publication_date(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+
+            with self.assertRaisesRegex(ValueError, "Datum is verplicht"):
+                save_knowledge_document_workflow(
+                    repo,
+                    {
+                        "title": ["Zonder datum"],
+                        "source_type": ["educatie"],
+                        "scope_type": ["algemeen"],
+                        "raw_text": ["Vrije kasstroom en waardering."],
+                    },
+                )
 
     def test_knowledge_import_reads_text_file_path(self) -> None:
         import tempfile

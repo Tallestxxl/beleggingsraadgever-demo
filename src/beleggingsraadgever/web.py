@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import html
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from http import HTTPStatus
@@ -25,6 +26,7 @@ from .importer import (
     validate_company_snapshot,
     write_snapshot_template,
 )
+from .knowledge import chunk_text
 from .knowledge_scope import build_knowledge_tags, knowledge_scope_from_tags
 from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
 from .classification import classify_company, classify_symbol
@@ -71,6 +73,16 @@ class V1StatusRow:
     knowledge_label: str
     knowledge_detail: str
     issues: list[str]
+
+
+@dataclass(frozen=True)
+class KnowledgeImportPreview:
+    values: dict[str, str]
+    tags: list[str]
+    chunks: list[KnowledgeChunk]
+    warnings: list[str]
+    char_count: int
+    word_count: int
 
 
 CSS = """
@@ -666,6 +678,7 @@ def _make_handler(repository: SQLiteRepository):
                 "/portfolio/import-csv",
                 "/portfolio/profile",
                 "/portfolio/position",
+                "/knowledge/preview",
                 "/knowledge/import",
                 "/knowledge/status",
                 "/status/refresh-peers",
@@ -701,6 +714,21 @@ def _make_handler(repository: SQLiteRepository):
                     self._redirect(f"/status?message={quote_plus(str(error))}")
                     return
                 self._redirect(f"/status?message={quote_plus(message)}")
+                return
+
+            if parsed.path == "/knowledge/preview":
+                try:
+                    preview = build_knowledge_import_preview(repository, params)
+                except ValueError as error:
+                    self._send_html(build_knowledge_page(repository, error=str(error)))
+                    return
+                self._send_html(
+                    build_knowledge_page(
+                        repository,
+                        message="Import voorbereid; controleer de metadata en OCR-tekst voordat je definitief opslaat.",
+                        preview=preview,
+                    )
+                )
                 return
 
             if parsed.path == "/knowledge/import":
@@ -925,8 +953,12 @@ def build_knowledge_page(
     message: Optional[str] = None,
     error: Optional[str] = None,
     filters: Optional[dict] = None,
+    preview: Optional[KnowledgeImportPreview] = None,
 ) -> str:
-    return build_shell("DEMO", render_knowledge_dashboard(repository, message=message, error=error, filters=filters))
+    return build_shell(
+        "DEMO",
+        render_knowledge_dashboard(repository, message=message, error=error, filters=filters, preview=preview),
+    )
 
 
 SOURCE_TYPE_LABELS = {
@@ -950,6 +982,7 @@ def render_knowledge_dashboard(
     message: Optional[str] = None,
     error: Optional[str] = None,
     filters: Optional[dict] = None,
+    preview: Optional[KnowledgeImportPreview] = None,
 ) -> str:
     active_filters = _knowledge_filter_values(filters or {})
     all_documents = repository.list_knowledge_documents()
@@ -983,8 +1016,9 @@ def render_knowledge_dashboard(
     </div>
     <section>
       <h3>Nieuw kennisfragment</h3>
-      {render_knowledge_import_form()}
+      {render_knowledge_import_form() if not preview else '<a class="button secondary" href="/knowledge">Nieuwe import starten</a>'}
     </section>
+    {render_knowledge_import_review(preview) if preview else ""}
     <section>
       <h3>Bibliotheek</h3>
       {render_knowledge_filter_form(active_filters)}
@@ -992,25 +1026,41 @@ def render_knowledge_dashboard(
     </section>"""
 
 
-def render_knowledge_import_form() -> str:
+def render_knowledge_import_form(
+    values: Optional[dict[str, str]] = None,
+    *,
+    action: str = "/knowledge/preview",
+    button_label: str = "Controleer import",
+) -> str:
+    values = values or {}
     source_options = "".join(
-        f'<option value="{html.escape(value)}">{html.escape(label)}</option>'
+        f'<option value="{html.escape(value)}"{" selected" if value == values.get("source_type") else ""}>{html.escape(label)}</option>'
         for value, label in SOURCE_TYPE_LABELS.items()
     )
     status_options = "".join(
-        f'<option value="{html.escape(value)}"{" selected" if value == "voorgesteld" else ""}>{html.escape(label)}</option>'
+        f'<option value="{html.escape(value)}"{" selected" if value == (values.get("status") or "voorgesteld") else ""}>{html.escape(label)}</option>'
         for value, label in KNOWLEDGE_STATUS_LABELS.items()
     )
+    scope_options = _select_options(
+        {
+            "algemeen": "Algemeen",
+            "aandeel": "Aandeel",
+            "sector": "Sector",
+            "thema": "Thema",
+        },
+        values.get("scope_type") or "algemeen",
+    )
+    date_value = values.get("publication_date") or date.today().isoformat()
     return f"""
-      <form class="knowledge-form" method="post" action="/knowledge/import">
+      <form class="knowledge-form" method="post" action="{html.escape(action)}">
         <div class="form-grid">
           <div>
             <label for="knowledge-title">Titel</label>
-            <input id="knowledge-title" name="title" type="text" autocomplete="off">
+            <input id="knowledge-title" name="title" type="text" value="{html.escape(values.get("title", ""))}" autocomplete="off">
           </div>
           <div>
             <label for="knowledge-date">Datum</label>
-            <input id="knowledge-date" name="publication_date" type="date" value="{date.today().isoformat()}">
+            <input id="knowledge-date" name="publication_date" type="date" value="{html.escape(date_value)}">
           </div>
         </div>
         <div class="form-grid">
@@ -1020,12 +1070,12 @@ def render_knowledge_import_form() -> str:
           </div>
           <div>
             <label for="knowledge-source-path">Bronpad of URL</label>
-            <input id="knowledge-source-path" name="source_path" type="text" autocomplete="off">
+            <input id="knowledge-source-path" name="source_path" type="text" value="{html.escape(values.get("source_path", ""))}" autocomplete="off">
           </div>
         </div>
         <div>
           <label for="knowledge-file-path">Bestandspad (.txt, .md, .pdf, afbeelding)</label>
-          <input id="knowledge-file-path" name="file_path" type="text" autocomplete="off">
+          <input id="knowledge-file-path" name="file_path" type="text" value="{html.escape(values.get("file_path", ""))}" autocomplete="off">
           <p class="evidence-meta">{html.escape(ocr_engine_status())}</p>
         </div>
         <div class="form-grid">
@@ -1035,30 +1085,87 @@ def render_knowledge_import_form() -> str:
           </div>
           <div>
             <label for="knowledge-tags">Tags</label>
-            <input id="knowledge-tags" name="tags" type="text" autocomplete="off">
+            <input id="knowledge-tags" name="tags" type="text" value="{html.escape(values.get("tags", ""))}" autocomplete="off">
           </div>
         </div>
         <div class="form-grid">
           <div>
             <label for="knowledge-scope-type">Scope</label>
-            <select id="knowledge-scope-type" name="scope_type">
-              <option value="algemeen">Algemeen</option>
-              <option value="aandeel">Aandeel</option>
-              <option value="sector">Sector</option>
-              <option value="thema">Thema</option>
-            </select>
+            <select id="knowledge-scope-type" name="scope_type">{scope_options}</select>
           </div>
           <div>
             <label for="knowledge-scope-value">Scopewaarde</label>
-            <input id="knowledge-scope-value" name="scope_value" type="text" autocomplete="off">
+            <input id="knowledge-scope-value" name="scope_value" type="text" value="{html.escape(values.get("scope_value", ""))}" autocomplete="off">
           </div>
         </div>
         <div>
           <label for="knowledge-text">Tekstfragment</label>
-          <textarea id="knowledge-text" name="raw_text"></textarea>
+          <textarea id="knowledge-text" name="raw_text">{html.escape(values.get("raw_text", ""))}</textarea>
         </div>
-        <button type="submit">Sla kennisfragment op</button>
+        <button type="submit">{html.escape(button_label)}</button>
       </form>"""
+
+
+def render_knowledge_import_review(preview: KnowledgeImportPreview) -> str:
+    metadata = preview.values
+    scope = knowledge_scope_from_tags(metadata["source_type"], preview.tags)
+    warning_items = (
+        "".join(f"<li>{html.escape(warning)}</li>" for warning in preview.warnings)
+        if preview.warnings
+        else "<li>Geen kwaliteitswaarschuwingen gevonden.</li>"
+    )
+    warning_class = "warn" if preview.warnings else "ok"
+    chunks = "".join(render_knowledge_chunk_preview(chunk) for chunk in preview.chunks[:4])
+    more_chunks = ""
+    if len(preview.chunks) > 4:
+        more_chunks = f'<p class="evidence-meta">Nog {len(preview.chunks) - 4} extra chunks voorbereid.</p>'
+    pill_label = "Waarschuwingen" if preview.warnings else "Geen waarschuwingen"
+    return f"""
+    <section>
+      <h3>Importcontrole</h3>
+      <p class="summary">{render_status_pill(pill_label, warning_class)} <span class="status-detail">Controleer metadata, scope en OCR-tekst voordat dit fragment in de kennisbibliotheek komt. Na opslag krijgt het standaard de status voorgesteld.</span></p>
+      <div class="report-header">
+        <div class="metric">
+          <span class="metric-label">Scope</span>
+          <span class="metric-value">{html.escape(scope.label)}</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Tekst</span>
+          <span class="metric-value">{preview.word_count} woorden</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Chunks</span>
+          <span class="metric-value">{len(preview.chunks)}</span>
+        </div>
+        <div class="metric">
+          <span class="metric-label">Status</span>
+          <span class="metric-value">{html.escape(KNOWLEDGE_STATUS_LABELS.get(metadata["status"], metadata["status"]))}</span>
+        </div>
+      </div>
+      <details class="supporting-detail" open>
+        <summary>Kwaliteitscontrole</summary>
+        <ul class="workflow-list">{warning_items}</ul>
+      </details>
+      <details class="supporting-detail" open>
+        <summary>Voorbereide chunks</summary>
+        <div class="evidence-list">{chunks}</div>
+        {more_chunks}
+      </details>
+      <h3>Definitief opslaan</h3>
+      {render_knowledge_import_form(metadata, action="/knowledge/import", button_label="Sla definitief op")}
+    </section>"""
+
+
+def render_knowledge_chunk_preview(chunk: KnowledgeChunk) -> str:
+    excerpt = chunk.text[:520].strip()
+    if len(chunk.text) > 520:
+        excerpt += "..."
+    return f"""
+      <article class="evidence-item">
+        <p class="evidence-title">Chunk {chunk.chunk_index + 1}</p>
+        <p class="evidence-meta">{len(chunk.text)} tekens - tags: {html.escape(", ".join(chunk.tags) if chunk.tags else "n.b.")}</p>
+        <p class="evidence-text">{html.escape(excerpt)}</p>
+      </article>"""
 
 
 def render_knowledge_filter_form(filters: dict[str, str]) -> str:
@@ -2061,14 +2168,44 @@ def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) ->
     return result.summary
 
 
+def build_knowledge_import_preview(repository: SQLiteRepository, params: dict) -> KnowledgeImportPreview:
+    values, tags = _prepare_knowledge_import(params)
+    chunks = chunk_text(values["raw_text"], document_id=0, tags=tags)
+    warnings = _knowledge_import_warnings(repository, values, tags, chunks)
+    return KnowledgeImportPreview(
+        values=values,
+        tags=tags,
+        chunks=chunks,
+        warnings=warnings,
+        char_count=len(values["raw_text"]),
+        word_count=len(re.findall(r"\S+", values["raw_text"])),
+    )
+
+
 def save_knowledge_document_workflow(repository: SQLiteRepository, params: dict) -> str:
+    values, tags = _prepare_knowledge_import(params)
+    document_id = repository.add_document(
+        title=values["title"],
+        source_type=values["source_type"],
+        raw_text=values["raw_text"],
+        author="Handmatig ingevoerd",
+        publication_date=values["publication_date"],
+        source_path=values["source_path"] or None,
+        tags=tags,
+        status=values["status"],
+    )
+    return f"Kennisfragment opgeslagen: {values['title']} (document {document_id})."
+
+
+def _prepare_knowledge_import(params: dict) -> tuple[dict[str, str], list[str]]:
     title = _first_param(params, "title")
-    source_type = (_first_param(params, "source_type") or "eigen_notitie").lower().replace(" ", "_")
-    publication_date = _first_param(params, "publication_date") or None
-    source_path = _first_param(params, "source_path") or None
+    raw_source_type = _first_param(params, "source_type")
+    source_type = raw_source_type.lower().replace(" ", "_") if raw_source_type else ""
+    publication_date = _first_param(params, "publication_date")
+    source_path = _first_param(params, "source_path")
     raw_text = _first_param(params, "raw_text")
     file_path = _first_param(params, "file_path")
-    scope_type = _first_param(params, "scope_type") or "algemeen"
+    scope_type = _first_param(params, "scope_type")
     scope_value = _first_param(params, "scope_value")
     extra_tags = _first_param(params, "tags")
     status = _first_param(params, "status") or "voorgesteld"
@@ -2077,28 +2214,76 @@ def save_knowledge_document_workflow(repository: SQLiteRepository, params: dict)
         raw_text = extract_text_from_file(Path(file_path))
     if not title and file_path:
         title = Path(file_path).expanduser().stem
+    if file_path and not source_path:
+        source_path = str(Path(file_path).expanduser())
     if not title:
         raise ValueError("Titel is verplicht, behalve bij bestandsimport waar de bestandsnaam gebruikt kan worden.")
+    if not source_type:
+        raise ValueError("Bron/type is verplicht.")
+    if not publication_date:
+        raise ValueError("Datum is verplicht voor kennisimport.")
+    if not scope_type:
+        raise ValueError("Scope is verplicht.")
     if not raw_text:
         raise ValueError("Tekstfragment of bestandspad is verplicht.")
     if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
         raise ValueError("Onbekende kennisstatus.")
-    if publication_date:
-        _required_iso_date(publication_date)
-    if file_path and not source_path:
-        source_path = str(Path(file_path).expanduser())
+    _required_iso_date(publication_date)
     tags = build_knowledge_tags(scope_type, scope_value, extra_tags)
-    document_id = repository.add_document(
-        title=title,
-        source_type=source_type,
-        raw_text=raw_text,
-        author="Handmatig ingevoerd",
-        publication_date=publication_date,
-        source_path=source_path,
-        tags=tags,
-        status=status,
+    return (
+        {
+            "title": title.strip(),
+            "source_type": source_type.strip(),
+            "publication_date": publication_date.strip(),
+            "source_path": source_path.strip(),
+            "file_path": file_path.strip(),
+            "scope_type": scope_type.strip().lower(),
+            "scope_value": scope_value.strip(),
+            "tags": extra_tags.strip(),
+            "status": status.strip(),
+            "raw_text": raw_text.strip(),
+        },
+        tags,
     )
-    return f"Kennisfragment opgeslagen: {title} (document {document_id})."
+
+
+def _knowledge_import_warnings(
+    repository: SQLiteRepository,
+    values: dict[str, str],
+    tags: list[str],
+    chunks: list[KnowledgeChunk],
+) -> list[str]:
+    warnings: list[str] = []
+    raw_text = values["raw_text"]
+    if len(raw_text) < 250:
+        warnings.append("De tekst is kort; controleer of OCR/import het volledige artikel heeft gelezen.")
+    if not chunks:
+        warnings.append("Er zijn geen RAG-chunks voorbereid; controleer de tekstinhoud.")
+    if "TODO" in raw_text.upper():
+        warnings.append("De tekst bevat TODO-tekst en is waarschijnlijk nog niet schoon.")
+    if "�" in raw_text:
+        warnings.append("De tekst bevat vervangtekens; OCR of tekencodering verdient controle.")
+    odd_character_count = len(re.findall(r"[^\w\s.,;:!?%€$'\"()\-/+&]", raw_text, flags=re.UNICODE))
+    if raw_text and odd_character_count / max(len(raw_text), 1) > 0.03:
+        warnings.append("Relatief veel vreemde tekens gevonden; controleer de OCR-kwaliteit.")
+    if values["publication_date"] > date.today().isoformat():
+        warnings.append("De publicatiedatum ligt in de toekomst.")
+
+    scope = knowledge_scope_from_tags(values["source_type"], tags)
+    if scope.kind == "general":
+        warnings.append("Algemene scope kan bij meerdere aandelen terugkomen; kies aandeel, sector of thema wanneer dit fragment specifieker is.")
+    elif scope.display_value:
+        scope_key = normalize_knowledge_filter_value(scope.display_value)
+        text_key = normalize_knowledge_filter_value(raw_text)
+        if scope_key and scope_key not in text_key:
+            warnings.append(f"Scopewaarde '{scope.display_value}' komt niet herkenbaar in de tekst voor.")
+
+    existing_documents = repository.list_knowledge_documents()
+    for document in existing_documents:
+        if document.source_type == values["source_type"] and document.raw_text.strip() == raw_text.strip():
+            warnings.append(f"Mogelijk duplicaat van bestaand kennisfragment: {document.title}.")
+            break
+    return warnings
 
 
 def update_knowledge_document_status_workflow(repository: SQLiteRepository, params: dict) -> str:
