@@ -19,7 +19,7 @@ from beleggingsraadgever.models import (
     PortfolioPrice,
     PortfolioAsset,
 )
-from beleggingsraadgever.sample_data import seed_demo
+from beleggingsraadgever.sample_data import seed_demo, seed_demo_instance
 from beleggingsraadgever.storage import SQLiteRepository
 from beleggingsraadgever.peer_discovery import refresh_peer_candidates
 
@@ -36,6 +36,23 @@ class AdvisorTests(unittest.TestCase):
             self.assertIn("Adviesrapport", markdown)
             self.assertIn("Dataversheid", markdown)
             self.assertGreaterEqual(len(report.evidence), 1)
+
+    def test_demo_instance_seed_adds_non_private_profile_and_portfolio(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            seed_demo_instance(repo)
+
+            profile = repo.investor_profile()
+            positions = repo.latest_portfolio_positions()
+            assets = repo.portfolio_assets()
+            report = Advisor(repo).analyze("DEMO")
+
+            self.assertIsNotNone(profile)
+            self.assertEqual(profile.risk_profile, "gebalanceerd")
+            self.assertEqual({position.symbol for position in positions}, {"ASML", "BESI", "DEMO"})
+            self.assertTrue(any(asset.asset_type == "cash" for asset in assets))
+            self.assertIsNotNone(report.portfolio_fit)
+            self.assertIn("fictieve", " ".join(asset.note.lower() for asset in assets))
 
     def test_report_includes_portfolio_fit_when_profile_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

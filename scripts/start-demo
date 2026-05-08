@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
+PYTHON_BIN="${BELEGGINGSRAADGEVER_PYTHON:-/usr/bin/python3}"
+DB_PATH="${BELEGGINGSRAADGEVER_DEMO_DB:-$ROOT_DIR/data/local/beleggingsraadgever-demo.sqlite}"
+HOST="${BELEGGINGSRAADGEVER_HOST:-127.0.0.1}"
+PORT="${BELEGGINGSRAADGEVER_DEMO_PORT:-8766}"
+
+PYTHONPATH="$ROOT_DIR/src" "$PYTHON_BIN" -m beleggingsraadgever --db "$DB_PATH" demo-instance-seed
+PYTHONPATH="$ROOT_DIR/src" "$PYTHON_BIN" -m beleggingsraadgever --db "$DB_PATH" serve --host "$HOST" --port "$PORT" --no-seed

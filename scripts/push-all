@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
+PYTHON_BIN="${BELEGGINGSRAADGEVER_PYTHON:-/usr/bin/python3}"
+
+cd "$ROOT_DIR"
+PYTHONPATH="$ROOT_DIR/src" "$PYTHON_BIN" -m unittest discover -s tests
+git push origin HEAD
+
+if git remote get-url demo >/dev/null 2>&1; then
+  git push demo HEAD:main
+else
+  echo "Geen demo remote gevonden. Configureer eerst: /bin/sh scripts/configure-demo-remote"
+fi

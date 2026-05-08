@@ -44,6 +44,46 @@ Open daarna:
 http://127.0.0.1:8765
 ```
 
+## Privé- en demo-instantie
+
+De applicatiecode is gedeeld, maar de financiële data hoort per instantie in
+een aparte SQLite database te staan. Gebruik daarom voor ontwikkeling en demo's
+twee startprofielen:
+
+```bash
+/bin/sh scripts/start-private
+/bin/sh scripts/start-demo
+```
+
+Standaard gebruikt dit:
+
+```text
+privé: http://127.0.0.1:8765  -> data/local/beleggingsraadgever.sqlite
+demo:  http://127.0.0.1:8766  -> data/local/beleggingsraadgever-demo.sqlite
+```
+
+De demo-instantie wordt gevuld met fictief profiel, fictieve portefeuille en
+openbare test-snapshots. De map `data/local/` wordt genegeerd door Git, zodat
+SQLite databases niet in GitHub terechtkomen.
+
+Optionele overrides:
+
+```bash
+BELEGGINGSRAADGEVER_PRIVATE_DB=/pad/naar/private.sqlite /bin/sh scripts/start-private
+BELEGGINGSRAADGEVER_DEMO_DB=/pad/naar/demo.sqlite /bin/sh scripts/start-demo
+BELEGGINGSRAADGEVER_DEMO_PORT=8876 /bin/sh scripts/start-demo
+```
+
+Een aparte GitHub demo-remote koppel je zo, nadat de repository bestaat:
+
+```bash
+/bin/sh scripts/configure-demo-remote https://github.com/Tallestxxl/beleggingsraadgever-demo.git
+/bin/sh scripts/push-all
+```
+
+`scripts/push-all` draait eerst de tests en pusht daarna dezelfde commit naar
+`origin` en, als die bestaat, naar de `demo` remote.
+
 Eerste echte aandeel-snapshots:
 
 ```text

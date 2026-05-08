@@ -15,7 +15,7 @@ from .importer import (
     write_snapshot_template,
 )
 from .real_data import DRAFTS_DIR, seed_besi, seed_curated_snapshots
-from .sample_data import seed_demo
+from .sample_data import seed_demo, seed_demo_instance
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
 from .web import serve
 
@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("init-db", help="Initialize the local database")
     subparsers.add_parser("demo-seed", help="Load deterministic demo data")
+    subparsers.add_parser("demo-instance-seed", help="Load non-private demo profile and portfolio data")
     subparsers.add_parser("seed-besi", help="Load the curated BESI v1 snapshot")
     subparsers.add_parser("seed-imports", help="Load all curated company JSON snapshots")
     demo = subparsers.add_parser("demo", help="Initialize demo data and render a demo report")
@@ -79,6 +80,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "demo-seed":
         seed_demo(repository)
         print(f"Demo data loaded: {repository.db_path}")
+        return 0
+
+    if args.command == "demo-instance-seed":
+        seed_demo_instance(repository)
+        seed_curated_snapshots(repository)
+        print(f"Demo instance data loaded: {repository.db_path}")
         return 0
 
     if args.command == "seed-besi":

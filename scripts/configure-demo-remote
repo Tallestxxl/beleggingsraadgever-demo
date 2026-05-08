@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
+REMOTE_URL="${1:-https://github.com/Tallestxxl/beleggingsraadgever-demo.git}"
+
+cd "$ROOT_DIR"
+if git remote get-url demo >/dev/null 2>&1; then
+  git remote set-url demo "$REMOTE_URL"
+else
+  git remote add demo "$REMOTE_URL"
+fi
+
+echo "Demo remote configured: $(git remote get-url demo)"
