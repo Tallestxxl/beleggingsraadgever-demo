@@ -23,25 +23,31 @@ Deze eerste versie gebruikt alleen de Python standard library.
 
 ```bash
 python3 -m unittest discover -s tests
-python3 scripts/demo_analysis.py
-```
-
-Aanbevolen lokaal gebruik:
-
-```bash
-/bin/sh scripts/demo
+/bin/sh scripts/br demo
 ```
 
 Webinterface:
 
 ```bash
-/bin/sh scripts/web
+/bin/sh scripts/start-private
 ```
 
 Open daarna:
 
 ```text
 http://127.0.0.1:8765
+```
+
+Demo-interface met fictieve portefeuille:
+
+```bash
+/bin/sh scripts/start-demo
+```
+
+Open daarna:
+
+```text
+http://127.0.0.1:8766
 ```
 
 ## Privé- en demo-instantie
@@ -83,6 +89,15 @@ Een aparte GitHub demo-remote koppel je zo, nadat de repository bestaat:
 
 `scripts/push-all` draait eerst de tests en pusht daarna dezelfde commit naar
 `origin` en, als die bestaat, naar de `demo` remote.
+
+Voor iedere push draait eerst een privacy-check:
+
+```bash
+/bin/sh scripts/privacy-check
+```
+
+Die blokkeert lokale databases, rapporten, CSV/Excel-bestanden, PDFs,
+conceptdata en `.env`-bestanden voordat ze in GitHub kunnen belanden.
 
 Eerste echte aandeel-snapshots:
 

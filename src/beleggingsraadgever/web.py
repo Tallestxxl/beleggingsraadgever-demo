@@ -35,6 +35,7 @@ from .models import CompanyProfile, InvestorProfile, PortfolioAsset, PortfolioCl
 from .models import KnowledgeDocument, PortfolioPerformanceSummary, PortfolioPositionPerformance
 from .peers import MIN_PEERS
 from .peer_discovery import refresh_peer_candidates, refresh_peer_candidates_for_portfolio
+from .placeholders import contains_todo, is_placeholder as _is_placeholder
 from .portfolio import exposure_buckets, portfolio_position_exposures
 from .portfolio_importer import import_portfolio_csv
 from .real_data import DRAFTS_DIR, PROCESSED_DIR, seed_curated_snapshots
@@ -2918,7 +2919,7 @@ def _parse_optional_int(value: str, label: str) -> Optional[int]:
 
 def _principle_is_todo(principle: dict) -> bool:
     values = [principle.get("title"), principle.get("statement")]
-    return any(isinstance(value, str) and "TODO" in value.upper() for value in values)
+    return any(contains_todo(value) for value in values)
 
 
 def _required_iso_date(value: str) -> None:
@@ -3200,13 +3201,6 @@ def _optional_float(value) -> Optional[float]:
     if _is_placeholder(value):
         return None
     return float(value)
-
-
-def _is_placeholder(value) -> bool:
-    if value is None:
-        return True
-    text = str(value).strip()
-    return not text or text == "YYYY-MM-DD" or text.upper().startswith("TODO")
 
 
 def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:

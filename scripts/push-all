@@ -5,6 +5,7 @@ ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
 PYTHON_BIN="${BELEGGINGSRAADGEVER_PYTHON:-/usr/bin/python3}"
 
 cd "$ROOT_DIR"
+/bin/sh "$ROOT_DIR/scripts/privacy-check"
 PYTHONPATH="$ROOT_DIR/src" "$PYTHON_BIN" -m unittest discover -s tests
 git push origin HEAD
 

@@ -2,10 +2,5 @@
 set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
-PYTHON_BIN="${BELEGGINGSRAADGEVER_PYTHON:-/usr/bin/python3}"
-DB_PATH="${BELEGGINGSRAADGEVER_DB:-$ROOT_DIR/data/local/beleggingsraadgever.sqlite}"
-HOST="${BELEGGINGSRAADGEVER_HOST:-127.0.0.1}"
-PORT="${BELEGGINGSRAADGEVER_PORT:-8765}"
 
-PYTHONPATH="$ROOT_DIR/src" "$PYTHON_BIN" -m beleggingsraadgever --db "$DB_PATH" serve --host "$HOST" --port "$PORT"
-
+exec "$ROOT_DIR/scripts/start-private"

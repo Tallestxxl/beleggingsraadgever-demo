@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)"
+
+cd "$ROOT_DIR"
+
+blocked_paths=$(
+  {
+    git ls-files
+    git diff --cached --name-only --diff-filter=ACMR
+    git ls-files -o --exclude-standard
+  } | sort -u | awk '
+    /^(data\/local|data\/raw|data\/processed|data\/indexes|data\/drafts)\// {
+      if ($0 !~ /\/\.gitkeep$/) print
+      next
+    }
+    /^reports\// { print; next }
+    /\.(sqlite($|-)|db($|-)|csv$|xls$|xlsx$|pdf$)/ { print; next }
+    /^\.env($|\.)/ { print; next }
+  '
+)
+
+if [ -n "$blocked_paths" ]; then
+  printf '%s\n' "Privacy-check geblokkeerd. Deze paden horen niet in GitHub:"
+  printf '%s\n' "$blocked_paths"
+  printf '%s\n' "Verplaats ze naar data/local, data/raw, reports of voeg ze bewust toe aan .gitignore."
+  exit 1
+fi
+
+printf '%s\n' "Privacy-check OK: geen lokale databases, rapporten, CSVs of secrets gevonden in Git."

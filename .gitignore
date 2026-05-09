@@ -10,6 +10,7 @@ dist/
 build/
 *.egg-info/
 exports/
+reports/
 
 # Local/private investment data
 data/*.sqlite

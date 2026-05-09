@@ -11,6 +11,8 @@ from .classification import classify_company
 from .models import DataSource, FinancialSnapshot, MarketSnapshot, Principle
 from .models import CompanyProfile, PortfolioClassification
 from .peer_discovery import refresh_peer_candidates
+from .placeholders import contains_todo, is_nonempty_string as _is_nonempty_string
+from .placeholders import is_placeholder as _is_placeholder
 from .storage import SQLiteRepository
 
 
@@ -356,17 +358,6 @@ def _data_source_has_placeholders(source: Dict[str, Any]) -> bool:
     return any(_is_placeholder(source.get(field)) for field in REQUIRED_DATA_SOURCE_FIELDS)
 
 
-def _is_placeholder(value: Any) -> bool:
-    if value is None:
-        return True
-    text = str(value).strip()
-    return not text or text == "YYYY-MM-DD" or text.upper().startswith("TODO")
-
-
-def _is_nonempty_string(value: Any) -> bool:
-    return isinstance(value, str) and bool(value.strip())
-
-
 def _validate_required_fields(
     errors: List[str],
     section_name: str,
@@ -394,7 +385,7 @@ def _validate_numeric_fields(
 
 def _validate_no_todos(errors: List[str], section_name: str, section: Dict[str, Any]) -> None:
     for field, value in section.items():
-        if isinstance(value, str) and "TODO" in value.upper():
+        if contains_todo(value):
             errors.append(f"{section_name}.{field} still contains TODO.")
 
 
@@ -409,7 +400,7 @@ def _validate_data_sources(errors: List[str], data_sources: List[Any], active_fi
             continue
         _validate_required_fields(errors, f"data_sources[{index}]", source, REQUIRED_DATA_SOURCE_FIELDS)
         _validate_no_todos(errors, f"data_sources[{index}]", source)
-        if _is_nonempty_string(field_name) and "TODO" not in json.dumps(source).upper():
+        if _is_nonempty_string(field_name) and not contains_todo(json.dumps(source)):
             source_fields.add(str(field_name))
         _validate_iso_date(errors, f"data_sources[{index}].source_date", source.get("source_date"))
     if active_fields and not data_sources:
@@ -445,7 +436,7 @@ def _is_inactive_template_source(source: Dict[str, Any], active_fields: set[str]
         source.get("source_url"),
         source.get("note"),
     ]
-    return any(isinstance(value, str) and "TODO" in value.upper() for value in template_values)
+    return any(contains_todo(value) for value in template_values)
 
 
 def _validate_documents(errors: List[str], documents: List[Any]) -> None:
