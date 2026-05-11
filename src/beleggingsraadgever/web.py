@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import html
 import json
-from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -15,21 +13,15 @@ from typing import Optional
 from urllib.parse import parse_qs, quote_plus, urlparse
 
 from .advisor import Advisor
-from .collector import collect_snapshot_data
 from .importer import (
     SnapshotValidationError,
     import_company_snapshot,
-    load_company_snapshot,
-    validate_company_snapshot,
-    write_snapshot_template,
 )
-from .models import AdviceReport, DataSource, FinancialSnapshot, KnowledgeChunk, KnowledgeHit, MarketSnapshot
-from .classification import classify_company, classify_symbol
-from .models import CompanyProfile, InvestorProfile, PortfolioAsset, PortfolioClassification, PortfolioPosition
+from .classification import classify_symbol
+from .models import AdviceReport, InvestorProfile, PortfolioAsset, PortfolioClassification, PortfolioPosition
 from .peer_discovery import refresh_peer_candidates, refresh_peer_candidates_for_portfolio
-from .placeholders import contains_todo, is_placeholder as _is_placeholder
 from .portfolio_importer import import_portfolio_csv
-from .real_data import DRAFTS_DIR, PROCESSED_DIR, seed_curated_snapshots
+from .real_data import PROCESSED_DIR, seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
 from .symbol_resolution import resolve_analysis_symbol
@@ -41,21 +33,18 @@ from .web_knowledge_import import (
 )
 from .web_layout import build_shell
 from .web_report import render_report
+from .web_snapshot import (
+    SnapshotWorkflow,
+    archive_imported_snapshot,
+    build_draft_report,
+    collect_snapshot_workflow,
+    ensure_snapshot_workflow,
+    local_peer_snapshots,
+    render_snapshot_workflow,
+    save_case_note_workflow,
+)
 from .web_status import build_status_page, build_v1_status_row
 from .web_portfolio import ASSET_LABELS, render_portfolio_dashboard
-
-
-@dataclass(frozen=True)
-class SnapshotWorkflow:
-    symbol: str
-    path: Path
-    created: bool
-    errors: list[str]
-    messages: list[str]
-
-    @property
-    def can_import(self) -> bool:
-        return not self.errors
 
 
 def serve(
@@ -440,130 +429,6 @@ def update_peer_candidate_status_workflow(repository: SQLiteRepository, params: 
     return f"Peer-kandidaat {peer_symbol} voor {symbol} is {labels[status]}."
 
 
-def ensure_snapshot_workflow(
-    symbol: str,
-    drafts_dir: Path = DRAFTS_DIR,
-    auto_collect: bool = False,
-    fetch_text=None,
-) -> SnapshotWorkflow:
-    normalized_symbol = symbol.strip().upper()
-    path = drafts_dir / f"{normalized_symbol.lower()}.json"
-    created = False
-    if not path.exists():
-        write_snapshot_template(normalized_symbol, path)
-        created = True
-    messages: list[str] = []
-    if auto_collect and (created or not _draft_has_core_figures(path)):
-        collection = collect_snapshot_data(normalized_symbol, path, fetch_text=fetch_text)
-        messages.extend(collection.messages)
-        messages.extend(collection.errors[:1] if not collection.messages else [])
-    errors = validate_snapshot_file(path)
-    return SnapshotWorkflow(symbol=normalized_symbol, path=path, created=created, errors=errors, messages=messages)
-
-
-def collect_snapshot_workflow(symbol: str, drafts_dir: Path = DRAFTS_DIR) -> SnapshotWorkflow:
-    normalized_symbol = symbol.strip().upper()
-    path = drafts_dir / f"{normalized_symbol.lower()}.json"
-    result = collect_snapshot_data(normalized_symbol, path)
-    messages = list(result.messages)
-    if result.updated_fields:
-        messages.append("Bijgewerkte velden: " + ", ".join(result.updated_fields))
-    if result.errors and not result.messages:
-        messages.append(result.errors[0])
-    return SnapshotWorkflow(
-        symbol=normalized_symbol,
-        path=result.path,
-        created=False,
-        errors=validate_snapshot_file(result.path),
-        messages=messages,
-    )
-
-
-def save_case_note_workflow(symbol: str, params: dict, drafts_dir: Path = DRAFTS_DIR) -> tuple[SnapshotWorkflow, Optional[str]]:
-    normalized_symbol = symbol.strip().upper()
-    path = drafts_dir / f"{normalized_symbol.lower()}.json"
-    if not path.exists():
-        write_snapshot_template(normalized_symbol, path)
-
-    title = _first_param(params, "note_title")
-    source_type = _first_param(params, "source_type") or "eigen_notitie"
-    publication_date = _first_param(params, "publication_date") or date.today().isoformat()
-    raw_text = _first_param(params, "raw_text")
-    conclusion = _first_param(params, "principle_statement")
-
-    if not title or not raw_text or not conclusion:
-        workflow = ensure_snapshot_workflow(normalized_symbol, drafts_dir=drafts_dir)
-        return workflow, "Vul minimaal titel, tekstfragment en conclusie in."
-
-    try:
-        _save_case_note(path, normalized_symbol, title, source_type, publication_date, raw_text, conclusion)
-        message = "Casusnotitie opgeslagen en gekoppeld aan dit aandeel."
-    except (OSError, json.JSONDecodeError, SnapshotValidationError, ValueError) as error:
-        workflow = ensure_snapshot_workflow(normalized_symbol, drafts_dir=drafts_dir)
-        return workflow, f"Casusnotitie kon niet worden opgeslagen: {error}"
-
-    workflow = SnapshotWorkflow(
-        symbol=normalized_symbol,
-        path=path,
-        created=False,
-        errors=validate_snapshot_file(path),
-        messages=[message],
-    )
-    return workflow, None
-
-
-def _save_case_note(
-    path: Path,
-    symbol: str,
-    title: str,
-    source_type: str,
-    publication_date: str,
-    raw_text: str,
-    conclusion: str,
-) -> None:
-    data = load_company_snapshot(path)
-    if publication_date:
-        _required_iso_date(publication_date)
-
-    note_title = title.strip()
-    document = {
-        "title": note_title,
-        "source_type": source_type.strip() or "eigen_notitie",
-        "author": "Handmatig ingevoerd",
-        "publication_date": publication_date,
-        "tags": [symbol, "casusnotitie"],
-        "raw_text": raw_text.strip(),
-    }
-
-    documents = data.setdefault("documents", [])
-    data["documents"] = [
-        document_item
-        for document_item in documents
-        if not isinstance(document_item, dict) or document_item.get("title") != note_title
-    ] + [document]
-
-    principle = {
-        "title": f"{symbol}: {note_title}",
-        "statement": conclusion.strip(),
-        "category": "casus",
-        "approved": True,
-        "confidence": 1.0,
-        "source_document_title": note_title,
-    }
-
-    principles = data.setdefault("principles", [])
-    if principles and isinstance(principles[0], dict) and _principle_is_todo(principles[0]):
-        principles[0] = principle
-    else:
-        data["principles"] = [
-            item
-            for item in principles
-            if not isinstance(item, dict) or item.get("source_document_title") != note_title
-        ] + [principle]
-
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-
 def _first_param(params: dict, name: str) -> str:
     values = params.get(name, [""])
     return values[0].strip() if values else ""
@@ -637,406 +502,10 @@ def _parse_optional_int(value: str, label: str) -> Optional[int]:
     return int(parsed)
 
 
-def _principle_is_todo(principle: dict) -> bool:
-    values = [principle.get("title"), principle.get("statement")]
-    return any(contains_todo(value) for value in values)
-
-
 def _required_iso_date(value: str) -> None:
     if len(value) != 10 or value[4] != "-" or value[7] != "-":
         raise ValueError("datum moet YYYY-MM-DD gebruiken")
     date.fromisoformat(value)
-
-
-def build_draft_report(repository: SQLiteRepository, workflow: SnapshotWorkflow) -> Optional[AdviceReport]:
-    """Build a provisional report from a draft snapshot when core figures are present."""
-
-    try:
-        snapshot = load_company_snapshot(workflow.path)
-        financial = _financial_from_snapshot(workflow.symbol, snapshot)
-        market = _market_from_snapshot(workflow.symbol, snapshot)
-    except (KeyError, TypeError, ValueError, SnapshotValidationError, json.JSONDecodeError, OSError):
-        return None
-
-    _store_snapshot_classification(repository, workflow.symbol, snapshot)
-    return Advisor(repository).analyze_snapshots(
-        workflow.symbol,
-        financial,
-        market,
-        data_sources=_data_sources_from_snapshot(workflow.symbol, snapshot),
-        evidence=_evidence_from_snapshot(snapshot),
-        peer_snapshots=local_peer_snapshots(),
-        extra_assumptions=[
-            "Dit is een conceptanalyse uit het lokale conceptbestand; nog niet alle handmatige controlepunten zijn afgerond.",
-            "Concurrentiepositie, cycliciteit, managementsignalen en jouw beleggingsprincipe kunnen het oordeel nog wijzigen.",
-        ],
-        knowledge_label="conceptbestand",
-    )
-
-
-def local_peer_snapshots() -> dict[str, tuple[FinancialSnapshot, MarketSnapshot]]:
-    snapshots: dict[str, tuple[FinancialSnapshot, MarketSnapshot]] = {}
-    for directory in (DRAFTS_DIR, Path("data/imports"), PROCESSED_DIR):
-        if not directory.exists():
-            continue
-        for path in directory.glob("*.json"):
-            try:
-                data = load_company_snapshot(path)
-                symbol = str(data.get("symbol", "")).strip().upper()
-                if not symbol:
-                    continue
-                snapshots[symbol] = (_financial_from_snapshot(symbol, data), _market_from_snapshot(symbol, data))
-            except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError, SnapshotValidationError):
-                continue
-    return snapshots
-
-
-def _store_snapshot_classification(repository: SQLiteRepository, symbol: str, snapshot: dict) -> None:
-    classification_data = snapshot.get("classification") if isinstance(snapshot.get("classification"), dict) else {}
-    profile_data = snapshot.get("company_profile") if isinstance(snapshot.get("company_profile"), dict) else {}
-    sector = classification_data.get("sector")
-    theme = classification_data.get("theme")
-    description = ""
-    industry = str(classification_data.get("industry") or profile_data.get("industry") or "")
-    if _classification_value_missing(sector) or _classification_value_missing(theme):
-        description = " ".join(
-            str(document.get("raw_text") or "")
-            for document in snapshot.get("documents", [])
-            if isinstance(document, dict)
-        )
-        classification = classify_company(
-            symbol,
-            company_name=profile_data.get("company_name"),
-            provider_sector=profile_data.get("sector"),
-            provider_industry=profile_data.get("industry"),
-            description=description or profile_data.get("description"),
-        )
-        sector = classification.sector if _classification_value_missing(sector) else sector
-        theme = classification.theme if _classification_value_missing(theme) else theme
-        confidence = classification.confidence
-        source = classification.source
-        industry = classification.industry or industry
-    else:
-        confidence = float(classification_data.get("confidence") or profile_data.get("classification_confidence") or 0.0)
-        source = str(classification_data.get("source") or profile_data.get("classification_source") or "")
-    if _classification_value_missing(sector) and _classification_value_missing(theme):
-        return
-    repository.upsert_portfolio_classification(
-        PortfolioClassification(symbol=symbol, sector=str(sector), theme=str(theme))
-    )
-    if profile_data or classification_data or description:
-        repository.upsert_company_profile(
-            CompanyProfile(
-                symbol=symbol,
-                company_name=str(profile_data.get("company_name") or ""),
-                provider_symbol=str(profile_data.get("provider_symbol") or ""),
-                source_name=str(profile_data.get("provider") or source),
-                source_url=str(profile_data.get("source_url") or classification_data.get("source_url") or ""),
-                as_of=str(profile_data.get("as_of") or ""),
-                sector=str(profile_data.get("sector") or sector),
-                industry=industry,
-                description=str(profile_data.get("description") or description),
-                classification_confidence=confidence,
-                classification_source=source,
-            )
-        )
-    refresh_peer_candidates(repository, symbol)
-
-
-def _classification_value_missing(value: object) -> bool:
-    return not str(value or "").strip() or str(value).strip() == "Onbekend"
-
-
-def validate_snapshot_file(path: Path) -> list[str]:
-    try:
-        return validate_company_snapshot(load_company_snapshot(path))
-    except SnapshotValidationError as error:
-        return error.errors
-    except json.JSONDecodeError as error:
-        return [f"Snapshot JSON is ongeldig: {error.msg} op regel {error.lineno}."]
-    except OSError as error:
-        return [f"Snapshotbestand kan niet worden gelezen: {error}."]
-
-
-@dataclass(frozen=True)
-class ArchivedSnapshot:
-    path: Path
-    source_checksum: str
-
-
-def archive_imported_snapshot(path: Path, symbol: str, processed_dir: Path = PROCESSED_DIR) -> ArchivedSnapshot:
-    """Move an imported draft snapshot to processed storage and preserve audit metadata."""
-
-    source_path = Path(path)
-    source_bytes = source_path.read_bytes()
-    source_checksum = hashlib.sha256(source_bytes).hexdigest()
-    imported_at = datetime.now().astimezone().isoformat(timespec="seconds")
-    data = json.loads(source_bytes.decode("utf-8"))
-    data["import_metadata"] = {
-        "imported_at": imported_at,
-        "imported_from": str(source_path),
-        "source_checksum": source_checksum,
-    }
-
-    processed_dir.mkdir(parents=True, exist_ok=True)
-    destination = _unique_processed_path(processed_dir, symbol, imported_at, source_checksum)
-    destination.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    source_path.unlink()
-    return ArchivedSnapshot(path=destination, source_checksum=source_checksum)
-
-
-def _unique_processed_path(processed_dir: Path, symbol: str, imported_at: str, checksum: str) -> Path:
-    stamp = (
-        imported_at.replace("-", "")
-        .replace(":", "")
-        .replace("+", "-")
-        .replace(".", "")
-    )
-    stamp = "".join(character for character in stamp if character.isalnum() or character == "-")[:15]
-    base = f"{symbol.strip().lower()}-{stamp}-{checksum[:8]}"
-    destination = processed_dir / f"{base}.json"
-    index = 2
-    while destination.exists():
-        destination = processed_dir / f"{base}-{index}.json"
-        index += 1
-    return destination
-
-
-def _draft_has_core_figures(path: Path) -> bool:
-    try:
-        snapshot = load_company_snapshot(path)
-        _financial_from_snapshot(str(snapshot.get("symbol", "")), snapshot)
-        _market_from_snapshot(str(snapshot.get("symbol", "")), snapshot)
-        return True
-    except (KeyError, TypeError, ValueError, SnapshotValidationError, json.JSONDecodeError, OSError):
-        return False
-
-
-def _financial_from_snapshot(symbol: str, snapshot: dict) -> FinancialSnapshot:
-    data = snapshot["financial_snapshot"]
-    return FinancialSnapshot(
-        symbol=symbol,
-        period_end=_required_text(data.get("period_end")),
-        period_type=_required_text(data.get("period_type")),
-        revenue=_required_float(data.get("revenue")),
-        gross_margin=_optional_float(data.get("gross_margin")),
-        operating_margin=_optional_float(data.get("operating_margin")),
-        net_margin=_optional_float(data.get("net_margin")),
-        free_cash_flow=_optional_float(data.get("free_cash_flow")),
-        debt=_optional_float(data.get("debt")),
-        cash=_optional_float(data.get("cash")),
-        shares_outstanding=_optional_float(data.get("shares_outstanding")),
-        dividend_per_share=_optional_float(data.get("dividend_per_share")),
-        buyback_value=_optional_float(data.get("buyback_value")),
-    )
-
-
-def _market_from_snapshot(symbol: str, snapshot: dict) -> MarketSnapshot:
-    data = snapshot["market_snapshot"]
-    return MarketSnapshot(
-        symbol=symbol,
-        as_of=_required_text(data.get("as_of")),
-        close_price=_required_float(data.get("close_price")),
-        currency=_required_text(data.get("currency")),
-        pe_ratio=_optional_float(data.get("pe_ratio")),
-        ev_ebitda=_optional_float(data.get("ev_ebitda")),
-        fcf_yield=_optional_float(data.get("fcf_yield")),
-        dividend_yield=_optional_float(data.get("dividend_yield")),
-        momentum_12m=_optional_float(data.get("momentum_12m")),
-        volatility_1y=_optional_float(data.get("volatility_1y")),
-    )
-
-
-def _data_sources_from_snapshot(symbol: str, snapshot: dict) -> list[DataSource]:
-    sources = []
-    for source in snapshot.get("data_sources", []):
-        if not isinstance(source, dict):
-            continue
-        required = [
-            source.get("field_name"),
-            source.get("value_label"),
-            source.get("source_name"),
-            source.get("source_url"),
-            source.get("source_date"),
-            source.get("source_quality"),
-        ]
-        if any(_is_placeholder(value) for value in required):
-            continue
-        sources.append(
-            DataSource(
-                symbol=symbol,
-                field_name=str(source["field_name"]),
-                value_label=str(source["value_label"]),
-                source_name=str(source["source_name"]),
-                source_url=str(source["source_url"]),
-                source_date=str(source["source_date"]),
-                source_quality=str(source["source_quality"]),
-                note=str(source.get("note") or ""),
-            )
-        )
-    return sources
-
-
-def _evidence_from_snapshot(snapshot: dict) -> list[KnowledgeHit]:
-    hits = []
-    for index, document in enumerate(snapshot.get("documents", [])):
-        if not isinstance(document, dict):
-            continue
-        raw_text = str(document.get("raw_text") or "").strip()
-        if not raw_text or "TODO:" in raw_text:
-            continue
-        tags = document.get("tags", [])
-        if not isinstance(tags, list):
-            tags = []
-        hits.append(
-            KnowledgeHit(
-                chunk=KnowledgeChunk(
-                    document_id=0,
-                    chunk_index=index,
-                    text=raw_text,
-                    tags=[str(tag) for tag in tags],
-                ),
-                score=1.0,
-                title=str(document.get("title") or "Conceptdocument"),
-                source_type=str(document.get("source_type") or "concept_snapshot"),
-                publication_date=document.get("publication_date"),
-            )
-        )
-    return hits[:5]
-
-
-def _required_text(value) -> str:
-    if _is_placeholder(value):
-        raise ValueError("required text is missing")
-    return str(value).strip()
-
-
-def _required_float(value) -> float:
-    if _is_placeholder(value):
-        raise ValueError("required number is missing")
-    return float(value)
-
-
-def _optional_float(value) -> Optional[float]:
-    if _is_placeholder(value):
-        return None
-    return float(value)
-
-
-def render_snapshot_workflow(workflow: SnapshotWorkflow) -> str:
-    status = "Concept aangemaakt" if workflow.created else "Concept gevonden"
-    status_detail = "Klaar voor import" if workflow.can_import else f"{len(workflow.errors)} punten open"
-    messages = "".join(f"<li>{html.escape(message)}</li>" for message in workflow.messages)
-    visible_errors = workflow.errors[:24]
-    hidden_count = max(0, len(workflow.errors) - len(visible_errors))
-    errors = "".join(f"<li>{html.escape(error)}</li>" for error in visible_errors)
-    if hidden_count:
-        errors += f"<li>Nog {hidden_count} extra punten. Gebruik de validator voor de volledige lijst.</li>"
-    if not errors:
-        errors = "<li>Geen validatiefouten gevonden.</li>"
-    import_disabled = "" if workflow.can_import else " disabled"
-    action_hint = (
-        "Alle validatiepunten zijn opgelost. Importeer de snapshot om dit aandeel voortaan als reguliere analyse te gebruiken."
-        if workflow.can_import
-        else "Vul de resterende validatiepunten aan voordat de snapshot definitief kan worden geïmporteerd."
-    )
-
-    return f"""
-    <div class="workflow-header">
-      <div class="verdict">
-        <h2>{html.escape(workflow.symbol)}: Workflow gestart</h2>
-        <p>Het conceptbestand bewaart opgehaalde cijfers, brondata en de resterende handmatige controlepunten.</p>
-      </div>
-      <div class="metric">
-        <span class="metric-label">Status</span>
-        <span class="metric-value">{html.escape(status_detail)}</span>
-      </div>
-    </div>
-    <div class="grid">
-      <div>
-        <section>
-          <h3>Conceptbestand</h3>
-          <p class="evidence-meta">{html.escape(status)}</p>
-          <code class="code-path">{html.escape(str(workflow.path))}</code>
-        </section>
-        {f'<section><h3>Workflowmeldingen</h3><ul class="workflow-list">{messages}</ul></section>' if messages else ''}
-        <section>
-          <h3>Validatie</h3>
-          <ul class="workflow-list">{errors}</ul>
-        </section>
-      </div>
-      <div>
-        {render_case_note_form(workflow)}
-        <section>
-          <h3>Acties</h3>
-          <p class="evidence-meta">{html.escape(action_hint)}</p>
-          <div class="button-row">
-            <a class="button secondary" href="/workflow?symbol={html.escape(workflow.symbol)}">Controleer opnieuw</a>
-            <form method="post" action="/workflow/collect">
-              <input type="hidden" name="symbol" value="{html.escape(workflow.symbol)}">
-              <button type="submit">Haal marktdata op</button>
-            </form>
-            <form method="post" action="/workflow/import">
-              <input type="hidden" name="symbol" value="{html.escape(workflow.symbol)}">
-              <button type="submit"{import_disabled}>Importeer snapshot</button>
-            </form>
-          </div>
-        </section>
-        <section>
-          <h3>Bronnen</h3>
-          <ul class="workflow-list">
-            <li>Jaarverslag of kwartaalbericht voor omzet, marges, kasstroom, schuld en kapitaalallocatie.</li>
-            <li>Koers- en waarderingsbron voor slotkoers, multiple, FCF-yield, dividendrendement en momentum.</li>
-            <li>Een korte casustekst met concurrentiepositie, cycliciteit, managementsignalen en risico.</li>
-          </ul>
-        </section>
-      </div>
-    </div>"""
-
-
-def render_case_note_form(workflow: SnapshotWorkflow) -> str:
-    source_options = {
-        "eigen_notitie": "Eigen notitie",
-        "artikel": "Artikel",
-        "podcast": "Podcast",
-        "jaarverslag": "Jaarverslag",
-        "beleggers_belangen": "Beleggers Belangen",
-        "interview": "Interview",
-    }
-    options = "".join(
-        f'<option value="{html.escape(value)}">{html.escape(label)}</option>'
-        for value, label in source_options.items()
-    )
-    return f"""
-        <section>
-          <h3>Casusnotitie voor {html.escape(workflow.symbol)}</h3>
-          <form class="note-form" method="post" action="/workflow/note">
-            <input type="hidden" name="symbol" value="{html.escape(workflow.symbol)}">
-            <div>
-              <label for="note-title-{html.escape(workflow.symbol)}">Titel</label>
-              <input id="note-title-{html.escape(workflow.symbol)}" name="note_title" type="text" autocomplete="off">
-            </div>
-            <div class="form-grid">
-              <div>
-                <label for="source-type-{html.escape(workflow.symbol)}">Bron/type</label>
-                <select id="source-type-{html.escape(workflow.symbol)}" name="source_type">{options}</select>
-              </div>
-              <div>
-                <label for="publication-date-{html.escape(workflow.symbol)}">Datum</label>
-                <input id="publication-date-{html.escape(workflow.symbol)}" name="publication_date" type="date" value="{date.today().isoformat()}">
-              </div>
-            </div>
-            <div>
-              <label for="raw-text-{html.escape(workflow.symbol)}">Tekstfragment</label>
-              <textarea id="raw-text-{html.escape(workflow.symbol)}" name="raw_text"></textarea>
-            </div>
-            <div>
-              <label for="principle-statement-{html.escape(workflow.symbol)}">Belangrijk principe / conclusie</label>
-              <textarea id="principle-statement-{html.escape(workflow.symbol)}" name="principle_statement"></textarea>
-            </div>
-            <button type="submit">Sla casusnotitie op</button>
-          </form>
-        </section>"""
 
 
 if __name__ == "__main__":
