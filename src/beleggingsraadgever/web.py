@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import html
 import json
-from datetime import date
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -17,10 +16,8 @@ from .importer import (
     SnapshotValidationError,
     import_company_snapshot,
 )
-from .classification import classify_symbol
-from .models import AdviceReport, InvestorProfile, PortfolioAsset, PortfolioClassification, PortfolioPosition
+from .models import AdviceReport
 from .peer_discovery import refresh_peer_candidates, refresh_peer_candidates_for_portfolio
-from .portfolio_importer import import_portfolio_csv
 from .real_data import PROCESSED_DIR, seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
@@ -44,7 +41,12 @@ from .web_snapshot import (
     save_case_note_workflow,
 )
 from .web_status import build_status_page, build_v1_status_row
-from .web_portfolio import ASSET_LABELS, render_portfolio_dashboard
+from .web_portfolio import (
+    import_portfolio_csv_workflow,
+    render_portfolio_dashboard,
+    save_portfolio_position,
+    save_portfolio_profile,
+)
 
 
 def serve(
@@ -356,60 +358,6 @@ def build_portfolio_page(
     return build_shell("DEMO", render_portfolio_dashboard(repository, message=message, error=error))
 
 
-def save_portfolio_profile(repository: SQLiteRepository, params: dict) -> None:
-    risk_profile = _first_param(params, "risk_profile") or "gebalanceerd"
-    if risk_profile not in {"defensief", "gebalanceerd", "offensief"}:
-        raise ValueError("Onbekend risicoprofiel.")
-    profile = InvestorProfile(
-        age=_parse_optional_int(_first_param(params, "age"), "leeftijd"),
-        annual_income=_parse_optional_float(_first_param(params, "annual_income"), "jaarinkomen"),
-        horizon_years=_parse_optional_int(_first_param(params, "horizon_years"), "beleggingshorizon"),
-        cash_buffer=_parse_optional_float(_first_param(params, "cash_buffer"), "cashbuffer"),
-        risk_profile=risk_profile,
-    )
-    repository.save_investor_profile(profile)
-
-    as_of = date.today().isoformat()
-    for asset_type in ASSET_LABELS:
-        value = _parse_optional_float(_first_param(params, f"asset_{asset_type}"), ASSET_LABELS[asset_type])
-        if value is None:
-            continue
-        repository.upsert_portfolio_asset(
-            PortfolioAsset(asset_type=asset_type, value=value, currency="EUR", as_of=as_of)
-        )
-
-
-def save_portfolio_position(repository: SQLiteRepository, params: dict) -> None:
-    symbol = _first_param(params, "symbol").upper()
-    if not symbol:
-        raise ValueError("Ticker is verplicht.")
-    as_of = _first_param(params, "as_of") or date.today().isoformat()
-    _required_iso_date(as_of)
-    repository.upsert_portfolio_position(
-        PortfolioPosition(
-            symbol=symbol,
-            quantity=_parse_required_float(_first_param(params, "quantity"), "aantal"),
-            average_cost=_parse_required_float(_first_param(params, "average_cost"), "gemiddelde aankoopprijs"),
-            currency=(_first_param(params, "currency") or "EUR").upper(),
-            account=_first_param(params, "account") or "Hoofdrekening",
-            as_of=as_of,
-        )
-    )
-    classification = classify_symbol(symbol)
-    repository.upsert_portfolio_classification(
-        PortfolioClassification(symbol=symbol, sector=classification.sector, theme=classification.theme)
-    )
-    refresh_peer_candidates(repository, symbol)
-
-
-def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) -> str:
-    csv_path = _first_param(params, "csv_path")
-    if not csv_path:
-        raise ValueError("CSV-pad is verplicht.")
-    result = import_portfolio_csv(repository, Path(csv_path))
-    return result.summary
-
-
 def update_peer_candidate_status_workflow(repository: SQLiteRepository, params: dict) -> str:
     symbol = _first_param(params, "symbol").upper()
     peer_symbol = _first_param(params, "peer_symbol").upper()
@@ -446,66 +394,6 @@ def safe_return_path(value: str) -> str:
 def redirect_with_message(path: str, message: str) -> str:
     separator = "&" if "?" in path else "?"
     return f"{path}{separator}message={quote_plus(message)}"
-
-
-def _parse_optional_float(value: str, label: str) -> Optional[float]:
-    if not value:
-        return None
-    normalized = _normalize_localized_number(value)
-    try:
-        parsed = float(normalized)
-    except ValueError as error:
-        raise ValueError(f"{label} moet een getal zijn.") from error
-    if parsed < 0:
-        raise ValueError(f"{label} mag niet negatief zijn.")
-    return parsed
-
-
-def _normalize_localized_number(value: str) -> str:
-    text = value.strip().replace(" ", "")
-    if "," in text:
-        return text.replace(".", "").replace(",", ".")
-    if "." in text and _looks_like_dutch_thousands(text):
-        return text.replace(".", "")
-    return text
-
-
-def _looks_like_dutch_thousands(value: str) -> bool:
-    parts = value.split(".")
-    return (
-        len(parts) > 1
-        and 1 <= len(parts[0]) <= 3
-        and all(part.isdigit() and len(part) == 3 for part in parts[1:])
-    )
-
-
-def _parse_required_float(value: str, label: str) -> float:
-    parsed = _parse_optional_float(value, label)
-    if parsed is None:
-        raise ValueError(f"{label} is verplicht.")
-    return parsed
-
-
-def _parse_required_int(value: str, label: str) -> int:
-    parsed = _parse_optional_int(value, label)
-    if parsed is None:
-        raise ValueError(f"{label} is verplicht.")
-    return parsed
-
-
-def _parse_optional_int(value: str, label: str) -> Optional[int]:
-    parsed = _parse_optional_float(value, label)
-    if parsed is None:
-        return None
-    if int(parsed) != parsed:
-        raise ValueError(f"{label} moet een heel getal zijn.")
-    return int(parsed)
-
-
-def _required_iso_date(value: str) -> None:
-    if len(value) != 10 or value[4] != "-" or value[7] != "-":
-        raise ValueError("datum moet YYYY-MM-DD gebruiken")
-    date.fromisoformat(value)
 
 
 if __name__ == "__main__":
