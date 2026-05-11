@@ -9,6 +9,7 @@ from typing import Optional
 from urllib.parse import quote_plus
 
 from .peers import MIN_PEERS
+from .peer_discovery import refresh_peer_candidates, refresh_peer_candidates_for_portfolio
 from .storage import SQLiteRepository
 from .symbol_resolution import resolve_analysis_symbol
 from .web_components import render_status_pill
@@ -41,6 +42,37 @@ def build_status_page(
     error: Optional[str] = None,
 ) -> str:
     return build_shell("DEMO", render_v1_status_dashboard(repository, message=message, error=error))
+
+
+def refresh_peer_candidates_workflow(repository: SQLiteRepository, params: dict) -> str:
+    symbol = _first_param(params, "symbol").upper()
+    if symbol == "__ALL__":
+        refreshed = refresh_peer_candidates_for_portfolio(repository)
+        count = sum(len(candidates) for candidates in refreshed.values())
+        return f"Peer-kandidaten herberekend: {count}"
+    if not symbol:
+        return "Geen aandeel ontvangen"
+    candidates = refresh_peer_candidates(repository, symbol)
+    return f"Peer-kandidaten voor {symbol} herberekend: {len(candidates)}"
+
+
+def update_peer_candidate_status_workflow(repository: SQLiteRepository, params: dict) -> str:
+    symbol = _first_param(params, "symbol").upper()
+    peer_symbol = _first_param(params, "peer_symbol").upper()
+    status = _first_param(params, "status")
+    if not symbol or not peer_symbol:
+        raise ValueError("Aandeel en peer-kandidaat zijn verplicht.")
+    if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
+        raise ValueError("Onbekende peerstatus.")
+    updated = repository.update_peer_candidate_status(symbol, peer_symbol, status)
+    if not updated:
+        raise ValueError(f"Peer-kandidaat {peer_symbol} voor {symbol} is niet gevonden.")
+    labels = {
+        "vertrouwd": "vertrouwd",
+        "voorgesteld": "teruggezet als voorstel",
+        "verworpen": "verworpen",
+    }
+    return f"Peer-kandidaat {peer_symbol} voor {symbol} is {labels[status]}."
 
 
 def render_v1_status_dashboard(
@@ -401,6 +433,11 @@ def _label_class(label: str) -> str:
     if label in {"Basis", "CSV", "Oud", "Laag", "Beperkt", "Bruikbaar met waarschuwing"}:
         return "warn"
     return "info"
+
+
+def _first_param(params: dict, name: str) -> str:
+    values = params.get(name, [""])
+    return values[0].strip() if values else ""
 
 
 def render_v1_analysis_warning(row: Optional[V1StatusRow]) -> str:

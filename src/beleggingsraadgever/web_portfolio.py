@@ -28,6 +28,7 @@ from .web_formatting import (
     format_percent,
     format_quantity,
 )
+from .web_layout import build_shell
 
 
 ASSET_LABELS = {
@@ -91,6 +92,14 @@ def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) ->
         raise ValueError("CSV-pad is verplicht.")
     result = import_portfolio_csv(repository, Path(csv_path))
     return result.summary
+
+
+def build_portfolio_page(
+    repository: SQLiteRepository,
+    message: Optional[str] = None,
+    error: Optional[str] = None,
+) -> str:
+    return build_shell("DEMO", render_portfolio_dashboard(repository, message=message, error=error))
 
 
 def render_portfolio_dashboard(

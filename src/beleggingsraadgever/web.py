@@ -17,7 +17,7 @@ from .importer import (
     import_company_snapshot,
 )
 from .models import AdviceReport
-from .peer_discovery import refresh_peer_candidates, refresh_peer_candidates_for_portfolio
+from .peer_discovery import refresh_peer_candidates_for_portfolio
 from .real_data import PROCESSED_DIR, seed_curated_snapshots
 from .sample_data import seed_demo
 from .storage import DEFAULT_DB_PATH, SQLiteRepository
@@ -40,10 +40,15 @@ from .web_snapshot import (
     render_snapshot_workflow,
     save_case_note_workflow,
 )
-from .web_status import build_status_page, build_v1_status_row
+from .web_status import (
+    build_status_page,
+    build_v1_status_row,
+    refresh_peer_candidates_workflow,
+    update_peer_candidate_status_workflow,
+)
 from .web_portfolio import (
+    build_portfolio_page,
     import_portfolio_csv_workflow,
-    render_portfolio_dashboard,
     save_portfolio_position,
     save_portfolio_profile,
 )
@@ -153,19 +158,8 @@ def _make_handler(repository: SQLiteRepository):
             params = parse_qs(body)
 
             if parsed.path == "/status/refresh-peers":
-                symbol = _first_param(params, "symbol").upper()
-                if symbol == "__ALL__":
-                    refreshed = refresh_peer_candidates_for_portfolio(repository)
-                    count = sum(len(candidates) for candidates in refreshed.values())
-                    self._redirect(f"/status?message={quote_plus(f'Peer-kandidaten herberekend: {count}')}")
-                    return
-                if not symbol:
-                    self._redirect("/status?message=Geen%20aandeel%20ontvangen")
-                    return
-                candidates = refresh_peer_candidates(repository, symbol)
-                self._redirect(
-                    f"/status?message={quote_plus(f'Peer-kandidaten voor {symbol} herberekend: {len(candidates)}')}"
-                )
+                message = refresh_peer_candidates_workflow(repository, params)
+                self._redirect(f"/status?message={quote_plus(message)}")
                 return
 
             if parsed.path == "/status/peer-status":
@@ -348,33 +342,6 @@ def build_page(
         content = '<div class="notice">DEMO staat klaar als eerste analyse.</div>'
 
     return build_shell(symbol, content)
-
-
-def build_portfolio_page(
-    repository: SQLiteRepository,
-    message: Optional[str] = None,
-    error: Optional[str] = None,
-) -> str:
-    return build_shell("DEMO", render_portfolio_dashboard(repository, message=message, error=error))
-
-
-def update_peer_candidate_status_workflow(repository: SQLiteRepository, params: dict) -> str:
-    symbol = _first_param(params, "symbol").upper()
-    peer_symbol = _first_param(params, "peer_symbol").upper()
-    status = _first_param(params, "status")
-    if not symbol or not peer_symbol:
-        raise ValueError("Aandeel en peer-kandidaat zijn verplicht.")
-    if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
-        raise ValueError("Onbekende peerstatus.")
-    updated = repository.update_peer_candidate_status(symbol, peer_symbol, status)
-    if not updated:
-        raise ValueError(f"Peer-kandidaat {peer_symbol} voor {symbol} is niet gevonden.")
-    labels = {
-        "vertrouwd": "vertrouwd",
-        "voorgesteld": "teruggezet als voorstel",
-        "verworpen": "verworpen",
-    }
-    return f"Peer-kandidaat {peer_symbol} voor {symbol} is {labels[status]}."
 
 
 def _first_param(params: dict, name: str) -> str:
