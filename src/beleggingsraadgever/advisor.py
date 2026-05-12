@@ -264,7 +264,8 @@ class Advisor:
                 exposure.position.quantity for exposure in target_positions
             )
 
-        total_wealth = asset_value + sum(position_values.values())
+        securities_value = sum(position_values.values())
+        total_wealth = asset_value + securities_value
         classification_symbol = _classification_symbol(self.repository, symbol_candidates, matched_symbols, symbol)
         classification = effective_classification(self.repository, classification_symbol)
         sector_buckets = exposure_buckets(exposures, by="sector", total_wealth=total_wealth)
@@ -277,8 +278,8 @@ class Advisor:
         theme_weight = theme_bucket.securities_weight if theme_bucket else 0.0
         risk_profile = profile.risk_profile if profile else "gebalanceerd"
         max_weight = {"defensief": 0.03, "gebalanceerd": 0.05, "offensief": 0.07}.get(risk_profile, 0.05)
-        position_weight = target_value / total_wealth if total_wealth else 0.0
-        position_room = max(0.0, (total_wealth * max_weight) - target_value) if total_wealth else 0.0
+        position_weight = target_value / securities_value if securities_value else 0.0
+        position_room = max(0.0, (securities_value * max_weight) - target_value) if securities_value else 0.0
         room_to_max = position_room
         available_cash = (
             max(0.0, cash_value - cash_buffer)
@@ -299,7 +300,7 @@ class Advisor:
             notes.append(f"Bestaande positie gevonden via portefeuillesymbool {', '.join(matched_symbols)}.")
         if position_weight > max_weight:
             notes.append("Huidig gewicht ligt boven het richtmaximum; bijkopen ligt niet voor de hand.")
-        elif total_wealth:
+        elif securities_value:
             notes.append(f"Resterende ruimte tot het richtmaximum is circa {_format_eur_plain(room_to_max)}.")
         if score.total < 60:
             notes.append("De aandelenscore is lager dan 60; behandel eventuele koopruimte als onderzoeksruimte, niet als koopsignaal.")
@@ -330,12 +331,12 @@ class Advisor:
             max_weight=max_weight,
             sector_concentrated=classification.sector != "Onbekend" and sector_weight >= SECTOR_WARNING_THRESHOLD,
             theme_concentrated=classification.theme != "Onbekend" and theme_weight >= THEME_WARNING_THRESHOLD,
-            total_wealth=total_wealth,
+            position_basis=securities_value,
         )
         buy_room = _buy_room(
             score_total=score.total,
             transaction_action=transaction_action,
-            total_wealth=total_wealth,
+            securities_value=securities_value,
             target_value=target_value,
             max_weight=max_weight,
             position_room=position_room,
@@ -356,6 +357,7 @@ class Advisor:
             risk_profile=risk_profile,
             max_weight=max_weight,
             total_wealth=total_wealth,
+            securities_value=securities_value,
             sector_name=classification.sector,
             sector_weight=sector_weight,
             theme_name=classification.theme,
@@ -375,6 +377,7 @@ class Advisor:
             max_weight=max_weight,
             room_to_max=room_to_max,
             total_wealth=total_wealth,
+            securities_value=securities_value,
             transaction_action=transaction_action,
             transaction_label=TRANSACTION_LABELS[transaction_action],
             position_room=position_room,
@@ -488,9 +491,9 @@ def _transaction_action(
     max_weight: float,
     sector_concentrated: bool,
     theme_concentrated: bool,
-    total_wealth: float,
+    position_basis: float,
 ) -> str:
-    if total_wealth <= 0:
+    if position_basis <= 0:
         return "watchlist"
     if score_total < 45:
         return "verkopen" if has_position else "niet_kopen"
@@ -594,6 +597,7 @@ def _transaction_rationale(
     risk_profile: str,
     max_weight: float,
     total_wealth: float,
+    securities_value: float,
     sector_name: str,
     sector_weight: float,
     theme_name: str,
@@ -610,13 +614,13 @@ def _transaction_rationale(
     ]
     if target_value > 0:
         lines.append(
-            f"Huidige positie {_format_eur_plain(target_value)} ({position_weight:.1%} van totaal vermogen); "
+            f"Huidige positie {_format_eur_plain(target_value)} ({position_weight:.1%} van effectenvermogen); "
             f"richtmaximum bij {risk_profile} profiel is {max_weight:.1%}."
         )
     else:
         lines.append(
             f"Geen bestaande positie; richtmaximum bij {risk_profile} profiel is {max_weight:.1%} "
-            f"van totaal vermogen {_format_eur_plain(total_wealth)}."
+            f"van effectenvermogen {_format_eur_plain(securities_value)}."
         )
 
     exposure_parts = []
@@ -657,7 +661,7 @@ def _buy_room(
     *,
     score_total: float,
     transaction_action: str,
-    total_wealth: float,
+    securities_value: float,
     target_value: float,
     max_weight: float,
     position_room: float,
@@ -689,8 +693,8 @@ def _buy_room(
     practical_buy_amount = max_new_buy_amount * factor
     calculation = [
         (
-            "Positieruimte = totaal vermogen "
-            f"{_format_eur_plain(total_wealth)} × richtmaximum {max_weight:.1%} "
+            "Positieruimte = effectenvermogen "
+            f"{_format_eur_plain(securities_value)} × richtmaximum {max_weight:.1%} "
             f"- huidige positie {_format_eur_plain(target_value)} = {_format_eur_plain(position_room)}."
         )
     ]

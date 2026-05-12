@@ -148,6 +148,7 @@ class PortfolioFit:
     max_weight: float
     room_to_max: float
     total_wealth: float
+    securities_value: float = 0.0
     transaction_action: str = "watchlist"
     transaction_label: str = "Watchlist"
     position_room: float = 0.0

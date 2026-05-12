@@ -723,6 +723,19 @@ class AdvisorTests(unittest.TestCase):
             repo.upsert_portfolio_asset(
                 PortfolioAsset(asset_type="cash", value=100000, currency="EUR", as_of="2026-05-05")
             )
+            repo.upsert_portfolio_position(
+                PortfolioPosition(
+                    symbol="BASE",
+                    quantity=1000,
+                    average_cost=90,
+                    currency="EUR",
+                    account="Test",
+                    as_of="2026-05-05",
+                )
+            )
+            repo.upsert_portfolio_price(
+                PortfolioPrice(symbol="BASE", as_of="2026-05-05", close_price=100, currency="EUR")
+            )
 
             report = Advisor(repo).analyze_snapshots(
                 "NEW",
@@ -754,10 +767,11 @@ class AdvisorTests(unittest.TestCase):
             self.assertEqual(report.portfolio_fit.transaction_label, "Kleine startpositie")
             self.assertEqual(report.portfolio_fit.max_new_buy_amount, 5000)
             self.assertEqual(report.portfolio_fit.practical_buy_amount, 5000)
+            self.assertEqual(report.portfolio_fit.securities_value, 100000)
             self.assertTrue(any("Beschikbare beleggingscash" in line for line in report.portfolio_fit.buy_room_calculation))
             self.assertTrue(any("Kleine startpositie" in line for line in report.portfolio_fit.transaction_rationale))
             self.assertTrue(any("cashbuffer" in line for line in report.portfolio_fit.transaction_rationale))
-            self.assertTrue(any("totaal vermogen" in line for line in report.portfolio_fit.transaction_rationale))
+            self.assertTrue(any("effectenvermogen" in line for line in report.portfolio_fit.transaction_rationale))
 
     def test_buy_room_is_capped_by_cash_above_buffer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -771,6 +785,19 @@ class AdvisorTests(unittest.TestCase):
             )
             repo.upsert_portfolio_asset(
                 PortfolioAsset(asset_type="house", value=1_000_000, currency="EUR", as_of="2026-05-05")
+            )
+            repo.upsert_portfolio_position(
+                PortfolioPosition(
+                    symbol="BASE",
+                    quantity=10000,
+                    average_cost=90,
+                    currency="EUR",
+                    account="Test",
+                    as_of="2026-05-05",
+                )
+            )
+            repo.upsert_portfolio_price(
+                PortfolioPrice(symbol="BASE", as_of="2026-05-05", close_price=100, currency="EUR")
             )
 
             report = Advisor(repo).analyze_snapshots(
@@ -799,7 +826,7 @@ class AdvisorTests(unittest.TestCase):
                 ),
             )
 
-            self.assertEqual(report.portfolio_fit.position_room, 52000)
+            self.assertEqual(report.portfolio_fit.position_room, 50000)
             self.assertEqual(report.portfolio_fit.available_cash, 20000)
             self.assertEqual(report.portfolio_fit.max_new_buy_amount, 20000)
             self.assertEqual(report.portfolio_fit.practical_buy_amount, 20000)

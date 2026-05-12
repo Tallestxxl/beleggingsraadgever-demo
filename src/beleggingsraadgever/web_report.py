@@ -74,8 +74,9 @@ def render_report(report: AdviceReport, v1_status: Optional[V1StatusRow] = None)
           <ul class="data-list">
             <li>Transactieadvies: <strong>{html.escape(fit.transaction_label)}</strong></li>
             <li>Huidige waarde positie: {html.escape(format_eur(fit.position_value))}</li>
-            <li>Gewicht positie: {html.escape(format_percent(fit.position_weight))}</li>
+            <li>Gewicht positie: {html.escape(format_percent(fit.position_weight))} van effecten</li>
             <li>Richtmaximum: {html.escape(format_percent(fit.max_weight))}</li>
+            <li>Effectenvermogen: {html.escape(format_eur(fit.securities_value))}</li>
             <li>Ruimte tot richtmaximum: {html.escape(format_eur(fit.room_to_max))}</li>
             <li>Maximale nieuwe koopruimte: <strong>{html.escape(format_eur(fit.max_new_buy_amount))}</strong></li>
             <li>Praktische koopruimte: <strong>{html.escape(format_eur(fit.practical_buy_amount))}</strong></li>
