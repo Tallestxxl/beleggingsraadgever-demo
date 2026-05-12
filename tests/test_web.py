@@ -12,6 +12,7 @@ from beleggingsraadgever.importer import write_snapshot_template
 from beleggingsraadgever.models import CompanyProfile, PortfolioClassification
 from beleggingsraadgever.sample_data import seed_demo
 from beleggingsraadgever.storage import SQLiteRepository
+from beleggingsraadgever.backups import list_database_backups
 from beleggingsraadgever.web import (
     SnapshotWorkflow,
     archive_imported_snapshot,
@@ -739,12 +740,20 @@ Soort,Beleggen,Naam,Status,Aantal,Kostpr. per eenheid,Valuta kostpr. per eenheid
             repo.init()
 
             message = import_portfolio_csv_workflow(repo, {"csv_path": [str(csv_path)]})
+            second_message = import_portfolio_csv_workflow(repo, {"csv_path": [str(csv_path)]})
             html = build_portfolio_page(repo)
+            backups = list_database_backups(repo.db_path)
 
             self.assertIn("1 posities", message)
+            self.assertIn("Backup bewaard", message)
+            self.assertIn("Backup bewaard", second_message)
             self.assertIn("historische samenvatting", message)
+            self.assertEqual(2, len(backups))
+            self.assertNotEqual(backups[0].filename, backups[1].filename)
             self.assertEqual(repo.latest_portfolio_positions()[0].symbol, "SHELL")
             self.assertIn("Historisch resultaat", html)
+            self.assertIn("Backups", html)
+            self.assertIn("Aantal backups", html)
             self.assertIn("EUR 204.042", html)
             self.assertIn("EUR 7.273", html)
             self.assertIn("EUR 345", html)

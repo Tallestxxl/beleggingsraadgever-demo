@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import html
+import sqlite3
 from datetime import date
 from pathlib import Path
 from typing import Optional
 
+from .backups import create_database_backup, latest_database_backup, list_database_backups
 from .classification import classify_symbol
 from .models import (
     InvestorProfile,
@@ -41,7 +43,7 @@ ASSET_LABELS = {
 }
 
 
-def save_portfolio_profile(repository: SQLiteRepository, params: dict) -> None:
+def save_portfolio_profile(repository: SQLiteRepository, params: dict) -> str:
     risk_profile = _first_param(params, "risk_profile") or "gebalanceerd"
     if risk_profile not in {"defensief", "gebalanceerd", "offensief"}:
         raise ValueError("Onbekend risicoprofiel.")
@@ -62,9 +64,10 @@ def save_portfolio_profile(repository: SQLiteRepository, params: dict) -> None:
         repository.upsert_portfolio_asset(
             PortfolioAsset(asset_type=asset_type, value=value, currency="EUR", as_of=as_of)
         )
+    return f"Profiel opgeslagen. {_backup_message(repository, 'profiel-opgeslagen')}"
 
 
-def save_portfolio_position(repository: SQLiteRepository, params: dict) -> None:
+def save_portfolio_position(repository: SQLiteRepository, params: dict) -> str:
     symbol = _first_param(params, "symbol").upper()
     if not symbol:
         raise ValueError("Ticker is verplicht.")
@@ -85,6 +88,7 @@ def save_portfolio_position(repository: SQLiteRepository, params: dict) -> None:
         PortfolioClassification(symbol=symbol, sector=classification.sector, theme=classification.theme)
     )
     refresh_peer_candidates(repository, symbol)
+    return f"Positie opgeslagen. {_backup_message(repository, f'positie-opgeslagen-{symbol}')}"
 
 
 def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) -> str:
@@ -92,7 +96,19 @@ def import_portfolio_csv_workflow(repository: SQLiteRepository, params: dict) ->
     if not csv_path:
         raise ValueError("CSV-pad is verplicht.")
     result = import_portfolio_csv(repository, Path(csv_path))
-    return result.summary
+    return f"{result.summary} {_backup_message(repository, 'csv-import')}"
+
+
+def create_manual_backup_workflow(repository: SQLiteRepository) -> str:
+    return _backup_message(repository, "handmatige-backup")
+
+
+def _backup_message(repository: SQLiteRepository, reason: str) -> str:
+    try:
+        backup = create_database_backup(repository.db_path, reason)
+    except (OSError, sqlite3.Error) as error:
+        return f"Backup mislukt: {error}"
+    return f"Backup bewaard: {backup.filename}"
 
 
 def build_portfolio_page(
@@ -116,6 +132,7 @@ def render_portfolio_dashboard(
     positions = portfolio_position_rows(exposures, position_performance)
     aliases = repository.portfolio_aliases()
     peer_coverage = portfolio_peer_coverage_rows(repository, [row["symbol"] for row in positions])
+    backups = list_database_backups(repository.db_path)
     securities_value = sum(row["market_value"] for row in positions)
     asset_value = sum(asset.value for asset in assets)
     total_value = securities_value + asset_value
@@ -180,6 +197,10 @@ def render_portfolio_dashboard(
           {render_csv_import_form()}
         </section>
         <section>
+          <h3>Backups</h3>
+          {render_backup_panel(repository, len(backups))}
+        </section>
+        <section>
           <h3>Nieuwe of bijgewerkte positie</h3>
           {render_position_form()}
         </section>
@@ -204,7 +225,34 @@ def render_csv_import_form() -> str:
               <label for="csv-path">CSV-pad</label>
               <input id="csv-path" name="csv_path" type="text" value="/Users/albertvanegmond/Downloads/Beleggen_report (1).csv">
             </div>
-            <button type="submit">Importeer CSV</button>
+          <button type="submit">Importeer CSV</button>
+          </form>"""
+
+
+def render_backup_panel(repository: SQLiteRepository, backup_count: int) -> str:
+    latest = latest_database_backup(repository.db_path)
+    if latest:
+        latest_text = (
+            f"{html.escape(latest.created_at.replace('T', ' '))} - "
+            f"{html.escape(latest.reason)} - {html.escape(latest.filename)}"
+        )
+        counts = (
+            f"{latest.portfolio_positions} posities, "
+            f"{latest.portfolio_assets} vermogensdelen, "
+            f"{latest.investor_profiles} profiel"
+        )
+    else:
+        latest_text = "Nog geen backup"
+        counts = "Geen backupmetadata"
+    return f"""
+          <div class="support-list">
+            <div><strong>Actieve database:</strong> {html.escape(str(repository.db_path))}</div>
+            <div><strong>Aantal backups:</strong> {backup_count}</div>
+            <div><strong>Laatste backup:</strong> {latest_text}</div>
+            <div><strong>Inhoud laatste backup:</strong> {html.escape(counts)}</div>
+          </div>
+          <form class="portfolio-form" method="post" action="/portfolio/backup">
+            <button type="submit">Maak backup</button>
           </form>"""
 
 

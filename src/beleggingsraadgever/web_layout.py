@@ -146,6 +146,15 @@ textarea {
   gap: 12px;
 }
 
+.support-list {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 button,
 .button {
   min-height: 40px;
@@ -574,4 +583,3 @@ def build_shell(symbol: str, content: str) -> str:
   </div>
 </body>
 </html>"""
-

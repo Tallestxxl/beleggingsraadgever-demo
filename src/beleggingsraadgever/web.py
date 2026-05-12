@@ -49,6 +49,7 @@ from .web_status import (
 )
 from .web_portfolio import (
     build_portfolio_page,
+    create_manual_backup_workflow,
     import_portfolio_csv_workflow,
     save_portfolio_position,
     save_portfolio_profile,
@@ -143,6 +144,7 @@ def _make_handler(repository: SQLiteRepository):
                 "/workflow/collect",
                 "/workflow/note",
                 "/portfolio/import-csv",
+                "/portfolio/backup",
                 "/portfolio/profile",
                 "/portfolio/position",
                 "/knowledge/preview",
@@ -206,13 +208,22 @@ def _make_handler(repository: SQLiteRepository):
                 self._redirect(redirect_with_message(return_to or "/knowledge", message))
                 return
 
+            if parsed.path == "/portfolio/backup":
+                try:
+                    message = create_manual_backup_workflow(repository)
+                except OSError as error:
+                    self._send_html(build_portfolio_page(repository, error=str(error)))
+                    return
+                self._redirect(f"/portfolio?message={quote_plus(message)}")
+                return
+
             if parsed.path == "/portfolio/profile":
                 try:
-                    save_portfolio_profile(repository, params)
+                    message = save_portfolio_profile(repository, params)
                 except ValueError as error:
                     self._send_html(build_portfolio_page(repository, error=str(error)))
                     return
-                self._redirect("/portfolio?message=Profiel%20opgeslagen")
+                self._redirect(f"/portfolio?message={quote_plus(message)}")
                 return
 
             if parsed.path == "/portfolio/import-csv":
@@ -226,11 +237,11 @@ def _make_handler(repository: SQLiteRepository):
 
             if parsed.path == "/portfolio/position":
                 try:
-                    save_portfolio_position(repository, params)
+                    message = save_portfolio_position(repository, params)
                 except ValueError as error:
                     self._send_html(build_portfolio_page(repository, error=str(error)))
                     return
-                self._redirect("/portfolio?message=Positie%20opgeslagen")
+                self._redirect(f"/portfolio?message={quote_plus(message)}")
                 return
 
             symbol = params.get("symbol", [""])[0].strip().upper()
