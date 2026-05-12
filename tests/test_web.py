@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from beleggingsraadgever.advisor import Advisor
 from beleggingsraadgever.importer import write_snapshot_template
-from beleggingsraadgever.models import CompanyProfile, PortfolioClassification
+from beleggingsraadgever.models import CompanyProfile, PeerCandidate, PortfolioClassification
 from beleggingsraadgever.sample_data import seed_demo
 from beleggingsraadgever.storage import SQLiteRepository
 from beleggingsraadgever.backups import list_database_backups
@@ -28,6 +28,7 @@ from beleggingsraadgever.web import (
     save_portfolio_profile,
     save_case_note_workflow,
     save_knowledge_document_workflow,
+    update_peer_candidate_status_workflow,
 )
 
 
@@ -757,6 +758,40 @@ Soort,Beleggen,Naam,Status,Aantal,Kostpr. per eenheid,Valuta kostpr. per eenheid
             self.assertIn("EUR 204.042", html)
             self.assertIn("EUR 7.273", html)
             self.assertIn("EUR 345", html)
+
+    def test_peer_status_update_creates_versioned_backup(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.replace_peer_candidates(
+                "RAND",
+                [
+                    PeerCandidate(
+                        symbol="RAND",
+                        peer_symbol="ADECCO",
+                        peer_group="Staffing",
+                        source="curated_theme",
+                        confidence=0.62,
+                        status="voorgesteld",
+                    )
+                ],
+            )
+
+            message = update_peer_candidate_status_workflow(
+                repo,
+                {"symbol": ["RAND"], "peer_symbol": ["ADECCO"], "status": ["vertrouwd"]},
+            )
+            backups = list_database_backups(repo.db_path)
+            candidate = repo.peer_candidates_for_symbol("RAND")[0]
+
+            self.assertIn("Peer-kandidaat ADECCO voor RAND is vertrouwd", message)
+            self.assertIn("Backup bewaard", message)
+            self.assertEqual("vertrouwd", candidate.status)
+            self.assertEqual("user_approved", candidate.source)
+            self.assertEqual(1, len(backups))
+            self.assertIn("peerstatus-rand-adecco-vertrouwd", backups[0].filename)
 
 
 def _fake_web_stockanalysis_lookup_fetch(url: str) -> str:

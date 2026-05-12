@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import html
+import sqlite3
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 from urllib.parse import quote_plus
 
+from .backups import create_database_backup
 from .peers import MIN_PEERS
 from .peer_discovery import refresh_peer_candidates, refresh_peer_candidates_for_portfolio
 from .storage import SQLiteRepository
@@ -73,7 +75,18 @@ def update_peer_candidate_status_workflow(repository: SQLiteRepository, params: 
         "voorgesteld": "teruggezet als voorstel",
         "verworpen": "verworpen",
     }
-    return f"Peer-kandidaat {peer_symbol} voor {symbol} is {labels[status]}."
+    return (
+        f"Peer-kandidaat {peer_symbol} voor {symbol} is {labels[status]}. "
+        f"{_backup_message(repository, f'peerstatus-{symbol}-{peer_symbol}-{status}')}"
+    )
+
+
+def _backup_message(repository: SQLiteRepository, reason: str) -> str:
+    try:
+        backup = create_database_backup(repository.db_path, reason)
+    except (OSError, sqlite3.Error) as error:
+        return f"Backup mislukt: {error}"
+    return f"Backup bewaard: {backup.filename}"
 
 
 def render_v1_status_dashboard(
