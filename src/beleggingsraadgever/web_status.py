@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import sqlite3
+import re
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
@@ -310,11 +311,49 @@ def _v1_identity_status(
     profile = repository.company_profile(symbol)
     if profile and profile.provider_symbol:
         alias_text = f", {len(visible_aliases)} alias(s)" if visible_aliases else ""
+        suspicious_alias = _provider_name_mismatch(profile.company_name, profile.description, visible_aliases)
+        if suspicious_alias:
+            warnings.append(
+                f"Providerprofiel voor {symbol} noemt {profile.company_name or profile.provider_symbol}, "
+                f"maar portefeuillealias {suspicious_alias} lijkt een ander bedrijf."
+            )
+            return (
+                "Controle",
+                (
+                    f"Provider-symbol {profile.provider_symbol}{alias_text}; "
+                    f"providernaam {profile.company_name or 'onbekend'} matcht niet met alias {suspicious_alias}."
+                ),
+            )
         return "OK", f"Provider-symbol {profile.provider_symbol}{alias_text}."
     if visible_aliases:
         return "OK", f"{len(visible_aliases)} alias(s) gekoppeld; providerprofiel ontbreekt nog."
     warnings.append("Identiteitskoppeling is alleen een directe ticker; controleer provider-symbolen bij naam/tickerverwarring.")
     return "Basis", "Alleen directe portefeuilleticker bekend."
+
+
+def _provider_name_mismatch(company_name: str, description: str, aliases: list) -> str:
+    provider_tokens = _identity_tokens(f"{company_name} {description}")
+    if not provider_tokens:
+        return ""
+    for alias in aliases:
+        if alias.alias_type not in {"broker_name", "broker_name_clean", "broker_normalized_symbol"}:
+            continue
+        raw_value = alias.raw_value or alias.alias_key
+        alias_tokens = _identity_tokens(raw_value)
+        if not alias_tokens:
+            continue
+        if provider_tokens.isdisjoint(alias_tokens):
+            return raw_value
+    return ""
+
+
+def _identity_tokens(value: str) -> set[str]:
+    ignored = {"holding", "holdings", "group", "groep", "nv", "n.v", "sa", "s.a", "plc", "inc", "corp", "ltd"}
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", value.lower())
+        if len(token) >= 4 and token not in ignored
+    }
 
 
 def _v1_market_status(

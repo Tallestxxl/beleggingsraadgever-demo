@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from beleggingsraadgever.advisor import Advisor
 from beleggingsraadgever.importer import write_snapshot_template
-from beleggingsraadgever.models import CompanyProfile, PeerCandidate, PortfolioClassification
+from beleggingsraadgever.models import CompanyProfile, PeerCandidate, PortfolioAlias, PortfolioClassification
 from beleggingsraadgever.sample_data import seed_demo
 from beleggingsraadgever.storage import SQLiteRepository
 from beleggingsraadgever.backups import list_database_backups
@@ -22,6 +22,7 @@ from beleggingsraadgever.web import (
     build_page,
     build_portfolio_page,
     build_status_page,
+    build_v1_status_row,
     ensure_snapshot_workflow,
     import_portfolio_csv_workflow,
     save_portfolio_position,
@@ -792,6 +793,38 @@ Soort,Beleggen,Naam,Status,Aantal,Kostpr. per eenheid,Valuta kostpr. per eenheid
             self.assertEqual("user_approved", candidate.source)
             self.assertEqual(1, len(backups))
             self.assertIn("peerstatus-rand-adecco-vertrouwd", backups[0].filename)
+
+    def test_v1_identity_warns_on_provider_company_mismatch(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.upsert_portfolio_alias(
+                PortfolioAlias(
+                    portfolio_symbol="RAND",
+                    alias_key="RANDSTAD",
+                    alias_type="broker_name",
+                    raw_value="RANDSTAD",
+                    source="portfolio_csv",
+                )
+            )
+            repo.upsert_company_profile(
+                CompanyProfile(
+                    symbol="RAND",
+                    company_name="Rand Capital",
+                    provider_symbol="RAND",
+                    source_name="StockAnalysis",
+                    source_url="https://stockanalysis.com/stocks/rand/",
+                    description="Rand Capital is a business development company.",
+                )
+            )
+
+            row = build_v1_status_row(repo, "RAND")
+
+            self.assertEqual("Controle", row.identity_label)
+            self.assertIn("providernaam Rand Capital matcht niet met alias RANDSTAD", row.identity_detail)
+            self.assertTrue(any("portefeuillealias RANDSTAD" in issue for issue in row.issues))
 
 
 def _fake_web_stockanalysis_lookup_fetch(url: str) -> str:
