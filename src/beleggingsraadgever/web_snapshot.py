@@ -33,6 +33,7 @@ from .peer_discovery import refresh_peer_candidates
 from .placeholders import contains_todo, is_placeholder as _is_placeholder
 from .real_data import DRAFTS_DIR, PROCESSED_DIR
 from .storage import SQLiteRepository
+from .web_params import first_param as _first_param, required_iso_date as _required_iso_date
 
 
 @dataclass(frozen=True)
@@ -563,17 +564,6 @@ def _optional_float(value) -> Optional[float]:
     return float(value)
 
 
-def _first_param(params: dict, name: str) -> str:
-    values = params.get(name, [""])
-    return values[0].strip() if values else ""
-
-
 def _principle_is_todo(principle: dict) -> bool:
     values = [principle.get("title"), principle.get("statement")]
     return any(contains_todo(value) for value in values)
-
-
-def _required_iso_date(value: str) -> None:
-    if len(value) != 10 or value[4] != "-" or value[7] != "-":
-        raise ValueError("datum moet YYYY-MM-DD gebruiken")
-    date.fromisoformat(value)

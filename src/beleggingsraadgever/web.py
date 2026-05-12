@@ -29,6 +29,7 @@ from .web_knowledge_import import (
     update_knowledge_document_status_workflow,
 )
 from .web_layout import build_shell
+from .web_params import first_param as _first_param, redirect_with_message, safe_return_path
 from .web_report import render_report
 from .web_snapshot import (
     SnapshotWorkflow,
@@ -342,25 +343,6 @@ def build_page(
         content = '<div class="notice">DEMO staat klaar als eerste analyse.</div>'
 
     return build_shell(symbol, content)
-
-
-def _first_param(params: dict, name: str) -> str:
-    values = params.get(name, [""])
-    return values[0].strip() if values else ""
-
-
-def safe_return_path(value: str) -> str:
-    if not value or not value.startswith("/") or value.startswith("//"):
-        return ""
-    parsed = urlparse(value)
-    if parsed.scheme or parsed.netloc:
-        return ""
-    return value
-
-
-def redirect_with_message(path: str, message: str) -> str:
-    separator = "&" if "?" in path else "?"
-    return f"{path}{separator}message={quote_plus(message)}"
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ from .storage import SQLiteRepository
 from .symbol_resolution import resolve_analysis_symbol
 from .web_components import render_status_pill
 from .web_layout import build_shell
+from .web_params import first_param as _first_param
 
 
 @dataclass(frozen=True)
@@ -433,11 +434,6 @@ def _label_class(label: str) -> str:
     if label in {"Basis", "CSV", "Oud", "Laag", "Beperkt", "Bruikbaar met waarschuwing"}:
         return "warn"
     return "info"
-
-
-def _first_param(params: dict, name: str) -> str:
-    values = params.get(name, [""])
-    return values[0].strip() if values else ""
 
 
 def render_v1_analysis_warning(row: Optional[V1StatusRow]) -> str:

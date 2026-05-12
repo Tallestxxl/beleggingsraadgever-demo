@@ -29,6 +29,7 @@ from .web_formatting import (
     format_quantity,
 )
 from .web_layout import build_shell
+from .web_params import first_param as _first_param, required_iso_date as _required_iso_date
 
 
 ASSET_LABELS = {
@@ -513,11 +514,6 @@ def portfolio_position_rows(
     return rows
 
 
-def _first_param(params: dict, name: str) -> str:
-    values = params.get(name, [""])
-    return values[0].strip() if values else ""
-
-
 def _parse_optional_float(value: str, label: str) -> Optional[float]:
     if not value:
         return None
@@ -563,9 +559,3 @@ def _parse_optional_int(value: str, label: str) -> Optional[int]:
     if int(parsed) != parsed:
         raise ValueError(f"{label} moet een heel getal zijn.")
     return int(parsed)
-
-
-def _required_iso_date(value: str) -> None:
-    if len(value) != 10 or value[4] != "-" or value[7] != "-":
-        raise ValueError("datum moet YYYY-MM-DD gebruiken")
-    date.fromisoformat(value)

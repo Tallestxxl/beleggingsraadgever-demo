@@ -13,6 +13,7 @@ from .models import KnowledgeChunk, KnowledgeDocument
 from .storage import SQLiteRepository
 from .web_components import render_status_pill
 from .web_layout import build_shell
+from .web_params import first_param as _first_param, required_iso_date as _required_iso_date
 
 
 @dataclass(frozen=True)
@@ -25,19 +26,6 @@ class KnowledgeImportPreview:
     word_count: int
     source_paragraphs: list[str] = field(default_factory=list)
     selection_summary: str = ""
-
-
-def _first_param(params: dict, name: str) -> str:
-    value = params.get(name, [""])
-    if isinstance(value, list):
-        return value[0].strip() if value else ""
-    return str(value).strip()
-
-
-def _required_iso_date(value: str) -> None:
-    if len(value) != 10 or value[4] != "-" or value[7] != "-":
-        raise ValueError("datum moet YYYY-MM-DD gebruiken")
-    date.fromisoformat(value)
 
 
 def build_knowledge_page(
@@ -544,4 +532,3 @@ def _select_options(options: dict[str, str], selected: str) -> str:
         f'<option value="{html.escape(value)}"{" selected" if value == selected else ""}>{html.escape(label)}</option>'
         for value, label in options.items()
     )
-

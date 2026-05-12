@@ -18,6 +18,7 @@ from .web_knowledge import (
     KnowledgeImportPreview,
     normalize_knowledge_filter_value,
 )
+from .web_params import first_param as _first_param, required_iso_date as _required_iso_date
 
 
 def build_knowledge_import_preview(repository: SQLiteRepository, params: dict) -> KnowledgeImportPreview:
@@ -357,19 +358,6 @@ def _knowledge_import_warnings(
             warnings.append(f"Mogelijk duplicaat van bestaand kennisfragment: {document.title}.")
             break
     return warnings
-
-
-def _first_param(params: dict, name: str) -> str:
-    value = params.get(name, [""])
-    if isinstance(value, list):
-        return value[0].strip() if value else ""
-    return str(value).strip()
-
-
-def _required_iso_date(value: str) -> None:
-    if len(value) != 10 or value[4] != "-" or value[7] != "-":
-        raise ValueError("datum moet YYYY-MM-DD gebruiken")
-    date.fromisoformat(value)
 
 
 def _parse_required_int(value: str, label: str) -> int:
