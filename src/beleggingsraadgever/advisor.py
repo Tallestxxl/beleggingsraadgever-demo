@@ -11,7 +11,12 @@ from .indicators import build_score, conviction_from_score, verdict_from_score
 from .knowledge_scope import knowledge_scope_from_tags, scope_matches_analysis
 from .models import AdviceReport, DataSource, EvidenceDiagnostics, FinancialSnapshot, KnowledgeHit, MarketSnapshot, PortfolioFit
 from .peers import SnapshotPair, build_peer_analysis
-from .portfolio import effective_classification, exposure_buckets, portfolio_position_exposures
+from .portfolio import (
+    effective_classification,
+    exposure_buckets,
+    portfolio_assets_net_value,
+    portfolio_position_exposures,
+)
 from .storage import SQLiteRepository
 
 
@@ -235,7 +240,7 @@ class Advisor:
         profile = self.repository.investor_profile()
         exposures = portfolio_position_exposures(self.repository)
         assets = self.repository.portfolio_assets()
-        asset_value = sum(asset.value for asset in assets)
+        asset_value = portfolio_assets_net_value(assets)
         cash_value = next((asset.value for asset in assets if asset.asset_type == "cash"), None)
         cash_buffer = profile.cash_buffer if profile and profile.cash_buffer is not None else None
         symbol_candidates = candidate_portfolio_symbols(symbol, data_sources or [])

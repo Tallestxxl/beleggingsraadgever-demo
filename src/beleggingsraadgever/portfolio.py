@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .classification import classify_symbol
-from .models import PortfolioClassification, PortfolioPosition
+from .models import PortfolioAsset, PortfolioClassification, PortfolioPosition
 from .storage import SQLiteRepository
+
+LIABILITY_ASSET_TYPES = {"mortgage"}
 
 
 @dataclass(frozen=True)
@@ -69,6 +71,14 @@ def exposure_buckets(
         )
         for label, value in sorted(values.items(), key=lambda item: item[1], reverse=True)
     ]
+
+
+def portfolio_asset_net_value(asset: PortfolioAsset) -> float:
+    return -asset.value if asset.asset_type in LIABILITY_ASSET_TYPES else asset.value
+
+
+def portfolio_assets_net_value(assets: list[PortfolioAsset]) -> float:
+    return sum(portfolio_asset_net_value(asset) for asset in assets)
 
 
 def effective_classification(repository: SQLiteRepository, symbol: str) -> PortfolioClassification:

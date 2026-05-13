@@ -367,6 +367,7 @@ class WebTests(unittest.TestCase):
                     "asset_gold": ["10.000"],
                     "asset_bitcoin": ["15.000"],
                     "asset_other": [""],
+                    "asset_mortgage": ["300.000"],
                 },
             )
             save_portfolio_position(
@@ -397,10 +398,13 @@ class WebTests(unittest.TestCase):
             self.assertIn("% effecten", html)
             self.assertNotIn("% totaal", html)
             self.assertIn("DEMO", html)
-            self.assertIn("EUR 550.000", html)
+            self.assertIn("EUR 250.900", html)
+            self.assertIn("EUR 250.000", html)
+            self.assertIn("EUR -300.000", html)
             self.assertIn('name="annual_income" type="text" inputmode="decimal" value="90.000"', html)
             self.assertIn('name="cash_buffer" type="text" inputmode="decimal" value="25.000"', html)
             self.assertIn('name="asset_house" type="text" inputmode="decimal" value="500.000"', html)
+            self.assertIn('name="asset_mortgage" type="text" inputmode="decimal" value="300.000"', html)
 
     def test_knowledge_page_imports_scoped_document(self) -> None:
         import tempfile

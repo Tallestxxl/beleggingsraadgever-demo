@@ -18,7 +18,12 @@ from .models import (
     PortfolioPosition,
     PortfolioPositionPerformance,
 )
-from .portfolio import exposure_buckets, portfolio_position_exposures
+from .portfolio import (
+    exposure_buckets,
+    portfolio_asset_net_value,
+    portfolio_assets_net_value,
+    portfolio_position_exposures,
+)
 from .peer_discovery import refresh_peer_candidates
 from .portfolio_importer import import_portfolio_csv
 from .storage import SQLiteRepository
@@ -40,6 +45,7 @@ ASSET_LABELS = {
     "gold": "Goud",
     "bitcoin": "Bitcoin",
     "other": "Overig",
+    "mortgage": "Hypotheek",
 }
 
 
@@ -134,7 +140,7 @@ def render_portfolio_dashboard(
     peer_coverage = portfolio_peer_coverage_rows(repository, [row["symbol"] for row in positions])
     backups = list_database_backups(repository.db_path)
     securities_value = sum(row["market_value"] for row in positions)
-    asset_value = sum(asset.value for asset in assets)
+    asset_value = portfolio_assets_net_value(assets)
     total_value = securities_value + asset_value
     notice = ""
     if error:
@@ -158,7 +164,7 @@ def render_portfolio_dashboard(
         <span class="metric-value">{format_eur(securities_value)}</span>
       </div>
       <div class="metric">
-        <span class="metric-label">Overig</span>
+        <span class="metric-label">Buiten effecten</span>
         <span class="metric-value">{format_eur(asset_value)}</span>
       </div>
     </div>
@@ -348,7 +354,7 @@ def render_position_form() -> str:
 def render_allocation_table(assets: list[PortfolioAsset], securities_value: float, total_value: float) -> str:
     rows = [
         ("Effectenportefeuille", securities_value),
-        *[(ASSET_LABELS.get(asset.asset_type, asset.asset_type), asset.value) for asset in assets],
+        *[(ASSET_LABELS.get(asset.asset_type, asset.asset_type), portfolio_asset_net_value(asset)) for asset in assets],
     ]
     if not rows or total_value <= 0:
         return '<p class="evidence-meta">Nog geen vermogensgegevens opgeslagen.</p>'
@@ -360,7 +366,7 @@ def render_allocation_table(assets: list[PortfolioAsset], securities_value: floa
           <td>{format_percent(value / total_value if total_value else 0)}</td>
         </tr>"""
         for label, value in rows
-        if value > 0
+        if value != 0
     )
     return f"""
           <table class="data-table">

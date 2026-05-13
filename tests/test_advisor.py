@@ -80,6 +80,45 @@ class AdvisorTests(unittest.TestCase):
             self.assertIn("Portefeuillefit", markdown)
             self.assertGreater(report.portfolio_fit.total_wealth, 0)
 
+    def test_mortgage_is_subtracted_from_total_wealth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.save_investor_profile(
+                InvestorProfile(age=52, annual_income=90000, horizon_years=12, cash_buffer=25000)
+            )
+            repo.upsert_portfolio_asset(
+                PortfolioAsset(asset_type="cash", value=50_000, currency="EUR", as_of="2026-05-05")
+            )
+            repo.upsert_portfolio_asset(
+                PortfolioAsset(asset_type="house", value=500_000, currency="EUR", as_of="2026-05-05")
+            )
+            repo.upsert_portfolio_asset(
+                PortfolioAsset(asset_type="mortgage", value=300_000, currency="EUR", as_of="2026-05-05")
+            )
+            repo.upsert_portfolio_position(
+                PortfolioPosition(
+                    symbol="BASE",
+                    quantity=10,
+                    average_cost=100,
+                    currency="EUR",
+                    account="Test",
+                    as_of="2026-05-05",
+                )
+            )
+            repo.upsert_portfolio_price(
+                PortfolioPrice(symbol="BASE", as_of="2026-05-05", close_price=100, currency="EUR")
+            )
+
+            report = Advisor(repo).analyze_snapshots(
+                "NEW",
+                FinancialSnapshot(symbol="NEW", period_end="2025-12-31", period_type="TTM", revenue=1_000_000),
+                MarketSnapshot(symbol="NEW", as_of="2026-05-05", close_price=10, currency="EUR"),
+            )
+
+            self.assertEqual(report.portfolio_fit.securities_value, 1_000)
+            self.assertEqual(report.portfolio_fit.total_wealth, 251_000)
+
     def test_portfolio_fit_warns_for_semiconductor_concentration_on_asmi(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")
