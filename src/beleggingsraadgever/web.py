@@ -52,8 +52,10 @@ from .web_status import (
 from .web_portfolio import (
     build_portfolio_page,
     create_manual_backup_workflow,
+    ignore_portfolio_position_workflow,
     import_portfolio_csv_workflow,
     refresh_portfolio_snapshots_workflow,
+    restore_portfolio_position_workflow,
     save_portfolio_position,
     save_portfolio_profile,
 )
@@ -150,6 +152,8 @@ def _make_handler(repository: SQLiteRepository):
                 "/portfolio/backup",
                 "/portfolio/profile",
                 "/portfolio/position",
+                "/portfolio/ignore-position",
+                "/portfolio/restore-position",
                 "/portfolio/refresh-snapshots",
                 "/knowledge/preview",
                 "/knowledge/import",
@@ -259,6 +263,24 @@ def _make_handler(repository: SQLiteRepository):
 
             if parsed.path == "/portfolio/refresh-snapshots":
                 message = refresh_portfolio_snapshots_workflow(repository, params)
+                self._redirect(f"/portfolio?message={quote_plus(message)}")
+                return
+
+            if parsed.path == "/portfolio/ignore-position":
+                try:
+                    message = ignore_portfolio_position_workflow(repository, params)
+                except ValueError as error:
+                    self._send_html(build_portfolio_page(repository, error=str(error)))
+                    return
+                self._redirect(f"/portfolio?message={quote_plus(message)}")
+                return
+
+            if parsed.path == "/portfolio/restore-position":
+                try:
+                    message = restore_portfolio_position_workflow(repository, params)
+                except ValueError as error:
+                    self._send_html(build_portfolio_page(repository, error=str(error)))
+                    return
                 self._redirect(f"/portfolio?message={quote_plus(message)}")
                 return
 

@@ -72,6 +72,31 @@ Aandelen,"","","","","","","","",""
         self.assertEqual(normalize_broker_name("BAM GROEP /KON/"), "BAMNB")
         self.assertEqual(normalize_broker_name("Onbekend Fonds Naam"), "ONBEKEND_FONDS_NAAM")
 
+    def test_import_keeps_ignored_bank_positions_out_of_active_portfolio(self) -> None:
+        csv_text = """A VAN EGMOND | Depotnummer 41.70.77.300 | 05 may.26 | 11:25
+Soort,Beleggen,Naam,Status,Aantal,Kostpr. per eenheid,Valuta kostpr. per eenheid,Opgebouwd vanaf,Koers,Valuta koers,Koers per,Marktwaarde, Valuta marktwaarde,Dividend / Coupons,Valuta Dividend / Coupons,Resultaat %,Resultaat EUR,
+,"417077300","LANDIS GROUP IN DEF","Ongerealiseerd","ST  1.000"," 3,55","EUR","01-01-2000"," 0,00","EUR","05-05-2026"," 0","EUR"," 0","EUR","-100,0 %"," -3.552",
+,"417077300","SHELL","Ongerealiseerd","ST  10"," 30,00","EUR","01-01-2022"," 32,00","EUR","05-05-2026"," 320","EUR"," 0","EUR","6,7 %"," 20",
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "portfolio.csv"
+            path.write_text(csv_text, encoding="utf-8")
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.ignore_portfolio_symbol("LANDIS_GROUP_IN_DEF", reason="Oude bankpositie.", source="test")
+
+            result = import_portfolio_csv(repo, path)
+
+            self.assertEqual(result.imported_positions, 2)
+            self.assertEqual(
+                [position.symbol for position in repo.latest_portfolio_positions()],
+                ["SHELL"],
+            )
+            self.assertEqual(
+                [position.symbol for position in repo.latest_portfolio_positions(include_ignored=True)],
+                ["LANDIS_GROUP_IN_DEF", "SHELL"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -127,6 +127,19 @@ def refresh_portfolio_snapshots_workflow(repository: SQLiteRepository, params: d
     return result.summary + backup
 
 
+def ignore_portfolio_position_workflow(repository: SQLiteRepository, params: dict) -> str:
+    symbol = _first_param(params, "symbol").upper()
+    reason = _first_param(params, "reason") or "Handmatig genegeerd vanuit portefeuilleoverzicht."
+    repository.ignore_portfolio_symbol(symbol, reason=reason, source="portfolio_ui")
+    return f"{symbol} wordt genegeerd in portefeuille-overzichten. {_backup_message(repository, f'positie-genegeerd-{symbol}')}"
+
+
+def restore_portfolio_position_workflow(repository: SQLiteRepository, params: dict) -> str:
+    symbol = _first_param(params, "symbol").upper()
+    repository.restore_portfolio_symbol(symbol)
+    return f"{symbol} is teruggezet in portefeuille-overzichten. {_backup_message(repository, f'positie-teruggezet-{symbol}')}"
+
+
 def _backup_message(repository: SQLiteRepository, reason: str) -> str:
     try:
         backup = create_database_backup(repository.db_path, reason)
@@ -158,6 +171,7 @@ def render_portfolio_dashboard(
     peer_coverage = portfolio_peer_coverage_rows(repository, [row["symbol"] for row in positions])
     snapshot_statuses = portfolio_snapshot_statuses(repository)
     backups = list_database_backups(repository.db_path)
+    ignored_positions = ignored_portfolio_position_rows(repository)
     securities_value = sum(row["market_value"] for row in positions)
     asset_value = portfolio_assets_net_value(assets)
     total_value = securities_value + asset_value
@@ -167,7 +181,7 @@ def render_portfolio_dashboard(
     elif message:
         notice = f'<div class="notice">{html.escape(message)}</div>'
 
-    return f"""
+    dashboard = f"""
     {notice}
     <div class="report-header">
       <div class="verdict">
@@ -245,6 +259,7 @@ def render_portfolio_dashboard(
       <h3>Effectenportefeuille</h3>
       {render_positions_table(positions)}
     </section>"""
+    return dashboard + render_ignored_positions_section(ignored_positions)
 
 
 def render_csv_import_form() -> str:
@@ -439,16 +454,82 @@ def render_positions_table(positions: list[dict]) -> str:
           <td>{format_percent(row["return_pct"]) if row["return_pct"] is not None else ""}</td>
           <td>{format_eur(row["result_value"]) if row["result_value"] is not None else ""}</td>
           <td>{format_eur(row["dividend_coupons"]) if row["dividend_coupons"] is not None else ""}</td>
+          <td>
+            <form class="inline-form" method="post" action="/portfolio/ignore-position">
+              <input type="hidden" name="symbol" value="{html.escape(row["symbol"])}">
+              <button type="submit">Negeer</button>
+            </form>
+          </td>
         </tr>"""
         for row in positions
     )
     return f"""
           <table class="data-table">
             <thead>
-              <tr><th>Ticker</th><th>Sector</th><th>Thema</th><th>Aantal</th><th>Kostprijs</th><th>Laatste koers</th><th>Waarde</th><th>Resultaat %</th><th>Resultaat EUR</th><th>Dividend/coupons</th></tr>
+              <tr><th>Ticker</th><th>Sector</th><th>Thema</th><th>Aantal</th><th>Kostprijs</th><th>Laatste koers</th><th>Waarde</th><th>Resultaat %</th><th>Resultaat EUR</th><th>Dividend/coupons</th><th>Actie</th></tr>
             </thead>
             <tbody>{body}</tbody>
           </table>"""
+
+
+def ignored_portfolio_position_rows(repository: SQLiteRepository) -> list[dict]:
+    ignored = repository.ignored_portfolio_symbols()
+    if not ignored:
+        return []
+    all_positions = {
+        position.symbol.upper(): position
+        for position in repository.latest_portfolio_positions(include_ignored=True)
+    }
+    rows = []
+    for item in ignored:
+        position = all_positions.get(item.symbol.upper())
+        rows.append(
+            {
+                "symbol": item.symbol,
+                "reason": item.reason,
+                "source": item.source,
+                "created_at": item.created_at,
+                "account": position.account if position else "",
+                "as_of": position.as_of if position else "",
+                "quantity": position.quantity if position else None,
+            }
+        )
+    return rows
+
+
+def render_ignored_positions_section(rows: list[dict]) -> str:
+    if not rows:
+        return ""
+    body = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(row["symbol"])}</td>
+          <td>{format_quantity(row["quantity"]) if row["quantity"] is not None else ""}</td>
+          <td>{html.escape(row["account"])}</td>
+          <td>{html.escape(row["as_of"])}</td>
+          <td>{html.escape(row["reason"])}</td>
+          <td>
+            <form class="inline-form" method="post" action="/portfolio/restore-position">
+              <input type="hidden" name="symbol" value="{html.escape(row["symbol"])}">
+              <button type="submit">Zet terug</button>
+            </form>
+          </td>
+        </tr>"""
+        for row in rows
+    )
+    return f"""
+    <section class="portfolio-wide-section">
+      <details class="supporting-detail">
+        <summary>Genegeerde bankposities ({len(rows)})</summary>
+        <div class="collapsible-content">
+          <p class="evidence-meta">Deze posities blijven in de database voor audit en CSV-historie, maar tellen niet mee in portefeuillewaarde, dekking, refresh, alias-koppeling of portefeuillefit.</p>
+          <table class="data-table">
+            <thead><tr><th>Ticker</th><th>Aantal</th><th>Account</th><th>Peildatum</th><th>Reden</th><th>Actie</th></tr></thead>
+            <tbody>{body}</tbody>
+          </table>
+        </div>
+      </details>
+    </section>"""
 
 
 def render_snapshot_refresh_panel(rows: list[PortfolioSnapshotStatus]) -> str:

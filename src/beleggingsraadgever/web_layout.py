@@ -416,8 +416,13 @@ h3 {
   margin: 0;
 }
 
+.inline-form {
+  margin: 0;
+}
+
 .status-actions .button,
-.status-actions button {
+.status-actions button,
+.inline-form button {
   min-height: 32px;
   padding: 5px 8px;
   font-size: 12px;

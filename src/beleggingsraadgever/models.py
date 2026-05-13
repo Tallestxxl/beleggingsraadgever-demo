@@ -57,6 +57,14 @@ class PortfolioPosition:
 
 
 @dataclass(frozen=True)
+class IgnoredPortfolioSymbol:
+    symbol: str
+    reason: str = ""
+    source: str = ""
+    created_at: str = ""
+
+
+@dataclass(frozen=True)
 class PortfolioPrice:
     symbol: str
     as_of: str

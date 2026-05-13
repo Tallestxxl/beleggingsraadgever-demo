@@ -33,8 +33,10 @@ from beleggingsraadgever.web import (
     build_status_page,
     build_v1_status_row,
     ensure_snapshot_workflow,
+    ignore_portfolio_position_workflow,
     import_portfolio_csv_workflow,
     refresh_portfolio_snapshots_workflow,
+    restore_portfolio_position_workflow,
     save_portfolio_position,
     save_portfolio_profile,
     save_case_note_workflow,
@@ -797,6 +799,51 @@ Soort,Beleggen,Naam,Status,Aantal,Kostpr. per eenheid,Valuta kostpr. per eenheid
             self.assertIn("EUR 204.042", html)
             self.assertIn("EUR 7.273", html)
             self.assertIn("EUR 345", html)
+
+    def test_portfolio_position_can_be_ignored_and_restored_generically(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            for symbol in ["SHELL", "LANDIS_GROUP_IN_DEF"]:
+                save_portfolio_position(
+                    repo,
+                    {
+                        "symbol": [symbol],
+                        "account": ["Hoofdrekening"],
+                        "quantity": ["10"],
+                        "average_cost": ["30"],
+                        "currency": ["EUR"],
+                        "as_of": ["2026-05-01"],
+                    },
+                )
+
+            message = ignore_portfolio_position_workflow(
+                repo,
+                {
+                    "symbol": ["LANDIS_GROUP_IN_DEF"],
+                    "reason": ["Oude bankpositie."],
+                },
+            )
+            active_symbols = {position.symbol for position in repo.latest_portfolio_positions()}
+            all_symbols = {position.symbol for position in repo.latest_portfolio_positions(include_ignored=True)}
+            refresh_symbols = {row.symbol for row in portfolio_snapshot_statuses(repo, today=date(2026, 5, 13))}
+            html = build_portfolio_page(repo)
+
+            self.assertIn("LANDIS_GROUP_IN_DEF wordt genegeerd", message)
+            self.assertEqual(active_symbols, {"SHELL"})
+            self.assertEqual(all_symbols, {"SHELL", "LANDIS_GROUP_IN_DEF"})
+            self.assertEqual(refresh_symbols, {"SHELL"})
+            self.assertEqual(repo.resolve_portfolio_aliases(["LANDIS_GROUP_IN_DEF"]), {})
+            self.assertIn("Genegeerde bankposities (1)", html)
+            self.assertIn("Zet terug", html)
+
+            restore_message = restore_portfolio_position_workflow(repo, {"symbol": ["LANDIS_GROUP_IN_DEF"]})
+            restored_symbols = {position.symbol for position in repo.latest_portfolio_positions()}
+
+            self.assertIn("LANDIS_GROUP_IN_DEF is teruggezet", restore_message)
+            self.assertEqual(restored_symbols, {"SHELL", "LANDIS_GROUP_IN_DEF"})
 
     def test_portfolio_refresh_panel_and_workflow_update_stale_snapshots(self) -> None:
         import tempfile

@@ -13,6 +13,7 @@ from .models import (
     CompanyProfile,
     DataSource,
     FinancialSnapshot,
+    IgnoredPortfolioSymbol,
     InvestorProfile,
     KnowledgeDocument,
     KnowledgeHit,
@@ -134,6 +135,13 @@ CREATE TABLE IF NOT EXISTS portfolio_positions (
   as_of TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(symbol, account, as_of)
+);
+
+CREATE TABLE IF NOT EXISTS ignored_portfolio_symbols (
+  symbol TEXT PRIMARY KEY,
+  reason TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS investor_profile (
@@ -841,6 +849,51 @@ class SQLiteRepository:
             for alias in aliases_for_portfolio_input(position.symbol, source="portfolio_position"):
                 self._upsert_portfolio_alias(conn, alias)
 
+    def ignore_portfolio_symbol(self, symbol: str, reason: str = "", source: str = "manual") -> None:
+        normalized = symbol.strip().upper()
+        if not normalized:
+            raise ValueError("Portefeuillesymbool is verplicht.")
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO ignored_portfolio_symbols (symbol, reason, source)
+                VALUES (?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                  reason=excluded.reason,
+                  source=excluded.source
+                """,
+                (normalized, reason, source),
+            )
+
+    def restore_portfolio_symbol(self, symbol: str) -> None:
+        normalized = symbol.strip().upper()
+        if not normalized:
+            raise ValueError("Portefeuillesymbool is verplicht.")
+        with self.connect() as conn:
+            conn.execute("DELETE FROM ignored_portfolio_symbols WHERE symbol = ?", (normalized,))
+
+    def ignored_portfolio_symbols(self) -> List[IgnoredPortfolioSymbol]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT symbol, reason, source, created_at
+                FROM ignored_portfolio_symbols
+                ORDER BY symbol
+                """
+            ).fetchall()
+        return [
+            IgnoredPortfolioSymbol(
+                symbol=row["symbol"],
+                reason=row["reason"],
+                source=row["source"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    def ignored_portfolio_symbol_set(self) -> set[str]:
+        return {ignored.symbol for ignored in self.ignored_portfolio_symbols()}
+
     def upsert_portfolio_price(self, price: PortfolioPrice) -> None:
         with self.connect() as conn:
             conn.execute(
@@ -939,7 +992,7 @@ class SQLiteRepository:
                 ),
             )
 
-    def latest_portfolio_position_performances(self) -> List[PortfolioPositionPerformance]:
+    def latest_portfolio_position_performances(self, *, include_ignored: bool = False) -> List[PortfolioPositionPerformance]:
         with self.connect() as conn:
             rows = conn.execute(
                 """
@@ -956,8 +1009,12 @@ class SQLiteRepository:
                  AND latest.account = p.account
                  AND latest.source = p.source
                  AND latest.max_as_of = p.as_of
+                LEFT JOIN ignored_portfolio_symbols ignored
+                  ON ignored.symbol = p.symbol
+                WHERE (? = 1 OR ignored.symbol IS NULL)
                 ORDER BY p.symbol, p.account
-                """
+                """,
+                (1 if include_ignored else 0,),
             ).fetchall()
         return [
             PortfolioPositionPerformance(
@@ -1090,7 +1147,7 @@ class SQLiteRepository:
             for alias in aliases:
                 self._upsert_portfolio_alias(conn, alias)
 
-    def resolve_portfolio_aliases(self, aliases: Iterable[str]) -> dict[str, str]:
+    def resolve_portfolio_aliases(self, aliases: Iterable[str], *, include_ignored: bool = False) -> dict[str, str]:
         from .identity import normalize_symbol
 
         normalized = []
@@ -1110,19 +1167,26 @@ class SQLiteRepository:
                 SELECT alias_key, portfolio_symbol
                 FROM portfolio_aliases
                 WHERE alias_key IN ({placeholders})
+                  AND (? = 1 OR portfolio_symbol NOT IN (
+                    SELECT symbol FROM ignored_portfolio_symbols
+                  ))
                 """,
-                normalized,
+                [*normalized, 1 if include_ignored else 0],
             ).fetchall()
         return {row["alias_key"]: row["portfolio_symbol"] for row in rows}
 
-    def portfolio_aliases(self) -> List[PortfolioAlias]:
+    def portfolio_aliases(self, *, include_ignored: bool = False) -> List[PortfolioAlias]:
         with self.connect() as conn:
             rows = conn.execute(
                 """
                 SELECT portfolio_symbol, alias_key, alias_type, raw_value, source
                 FROM portfolio_aliases
+                WHERE (? = 1 OR portfolio_symbol NOT IN (
+                  SELECT symbol FROM ignored_portfolio_symbols
+                ))
                 ORDER BY portfolio_symbol, alias_type, alias_key
-                """
+                """,
+                (1 if include_ignored else 0,),
             ).fetchall()
         return [
             PortfolioAlias(
@@ -1135,16 +1199,19 @@ class SQLiteRepository:
             for row in rows
         ]
 
-    def portfolio_aliases_for_symbol(self, symbol: str) -> List[PortfolioAlias]:
+    def portfolio_aliases_for_symbol(self, symbol: str, *, include_ignored: bool = False) -> List[PortfolioAlias]:
         with self.connect() as conn:
             rows = conn.execute(
                 """
                 SELECT portfolio_symbol, alias_key, alias_type, raw_value, source
                 FROM portfolio_aliases
                 WHERE portfolio_symbol = ?
+                  AND (? = 1 OR portfolio_symbol NOT IN (
+                    SELECT symbol FROM ignored_portfolio_symbols
+                  ))
                 ORDER BY alias_type, alias_key
                 """,
-                (symbol.upper(),),
+                (symbol.upper(), 1 if include_ignored else 0),
             ).fetchall()
         return [
             PortfolioAlias(
@@ -1179,7 +1246,7 @@ class SQLiteRepository:
             source=row["source"],
         )
 
-    def latest_portfolio_positions(self) -> List[PortfolioPosition]:
+    def latest_portfolio_positions(self, *, include_ignored: bool = False) -> List[PortfolioPosition]:
         with self.connect() as conn:
             rows = conn.execute(
                 """
@@ -1193,8 +1260,12 @@ class SQLiteRepository:
                   ON latest.symbol = p.symbol
                  AND latest.account = p.account
                  AND latest.max_as_of = p.as_of
+                LEFT JOIN ignored_portfolio_symbols ignored
+                  ON ignored.symbol = p.symbol
+                WHERE (? = 1 OR ignored.symbol IS NULL)
                 ORDER BY p.symbol, p.account
-                """
+                """,
+                (1 if include_ignored else 0,),
             ).fetchall()
         return [
             PortfolioPosition(
