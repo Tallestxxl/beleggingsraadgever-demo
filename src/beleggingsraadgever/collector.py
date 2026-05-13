@@ -38,6 +38,17 @@ AMSTERDAM_ALIASES = {
     "SHELL": "SHELL",
 }
 
+STOCKANALYSIS_RESERVED_STOCK_SLUGS = {
+    "compare",
+    "earnings-calendar",
+    "industry",
+    "industries",
+    "market",
+    "markets",
+    "screener",
+    "stocks",
+}
+
 
 @dataclass(frozen=True)
 class MarketData:
@@ -349,6 +360,8 @@ def _stockanalysis_candidates(
 
     if ":" in normalized_symbol:
         exchange, ticker = normalized_symbol.split(":", 1)
+        if exchange == "ETF" and _is_ticker_like(ticker):
+            candidates.append((f"ETF:{ticker}", f"etf/{ticker.lower()}/"))
         if exchange == "AMS" and ticker:
             candidates.append((f"AMS:{ticker}", f"quote/ams/{ticker}/"))
     elif normalized_symbol.endswith(".AS"):
@@ -362,6 +375,7 @@ def _stockanalysis_candidates(
         if _is_ticker_like(normalized_symbol):
             candidates.append((normalized_symbol, f"stocks/{normalized_symbol.lower()}/"))
             candidates.append((f"AMS:{normalized_symbol}", f"quote/ams/{normalized_symbol}/"))
+            candidates.append((f"ETF:{normalized_symbol}", f"etf/{normalized_symbol.lower()}/"))
 
     seen = set()
     for provider_symbol, path in candidates:
@@ -387,6 +401,8 @@ def _stockanalysis_candidate_from_provider_symbol(provider_symbol: str) -> Optio
         ticker = ticker.strip().upper()
         if not exchange or not _is_ticker_like(ticker):
             return None
+        if exchange == "etf":
+            return _stockanalysis_candidate_from_path(f"ETF:{ticker}", f"etf/{ticker.lower()}/")
         return _stockanalysis_candidate_from_path(f"{exchange.upper()}:{ticker}", f"quote/{exchange}/{ticker}/")
     if not _is_ticker_like(symbol):
         return None
@@ -433,10 +449,19 @@ def _parse_stockanalysis_lookup_symbols(raw_html: str) -> List[str]:
     symbols: List[str] = []
     for match in re.finditer(r'\{s:"([^"]+)",n:"(?:\\.|[^"])*",t:"Stock"', raw_html):
         symbols.append(_decode_js_string(match.group(1)))
-    for match in re.finditer(r'href="/(stocks/[A-Za-z0-9.\-]+/|quote/[a-z]+/[A-Za-z0-9.\-]+/)"', raw_html):
+    for match in re.finditer(
+        r'href="/(stocks/[A-Za-z0-9.\-]+/|quote/[a-z]+/[A-Za-z0-9.\-]+/|etf/[A-Za-z0-9.\-]+/)"',
+        raw_html,
+    ):
         path = match.group(1)
         if path.startswith("stocks/"):
-            symbols.append(path.removeprefix("stocks/").strip("/").upper())
+            slug = path.removeprefix("stocks/").strip("/")
+            if _is_stockanalysis_stock_slug_like(slug):
+                symbols.append(slug.upper())
+        elif path.startswith("etf/"):
+            ticker = path.removeprefix("etf/").strip("/").upper()
+            if _is_ticker_like(ticker):
+                symbols.append(f"ETF:{ticker}")
         else:
             _, exchange, ticker = path.strip("/").split("/", 2)
             symbols.append(f"@{exchange}/{ticker.strip('/')}")
@@ -453,6 +478,8 @@ def _stockanalysis_candidate_from_lookup_symbol(lookup_symbol: str) -> Optional[
         ticker = ticker.strip().upper()
         if not exchange or not _is_ticker_like(ticker):
             return None
+        if exchange == "etf":
+            return _stockanalysis_candidate_from_path(f"ETF:{ticker}", f"etf/{ticker.lower()}/")
         return _stockanalysis_candidate_from_path(f"{exchange.upper()}:{ticker}", f"quote/{exchange}/{ticker}/")
     if ":" in symbol:
         exchange, ticker = symbol.split(":", 1)
@@ -460,6 +487,8 @@ def _stockanalysis_candidate_from_lookup_symbol(lookup_symbol: str) -> Optional[
         ticker = ticker.strip().upper()
         if not exchange or not _is_ticker_like(ticker):
             return None
+        if exchange == "etf":
+            return _stockanalysis_candidate_from_path(f"ETF:{ticker}", f"etf/{ticker.lower()}/")
         return _stockanalysis_candidate_from_path(f"{exchange.upper()}:{ticker}", f"quote/{exchange}/{ticker}/")
     ticker = symbol.upper()
     if not _is_ticker_like(ticker):
@@ -469,6 +498,15 @@ def _stockanalysis_candidate_from_lookup_symbol(lookup_symbol: str) -> Optional[
 
 def _is_ticker_like(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Z0-9.\-]+", value.strip().upper()))
+
+
+def _is_stockanalysis_stock_slug_like(value: str) -> bool:
+    slug = value.strip().lower()
+    return (
+        slug not in STOCKANALYSIS_RESERVED_STOCK_SLUGS
+        and len(slug) <= 10
+        and _is_ticker_like(slug.upper())
+    )
 
 
 def _stockanalysis_candidate_from_path(provider_symbol: str, path: str) -> StockAnalysisCandidate:

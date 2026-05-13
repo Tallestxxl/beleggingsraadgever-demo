@@ -10,7 +10,14 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from beleggingsraadgever.advisor import Advisor
 from beleggingsraadgever.importer import write_snapshot_template
-from beleggingsraadgever.models import CompanyProfile, PeerCandidate, PortfolioAlias, PortfolioClassification, ProviderCandidate
+from beleggingsraadgever.models import (
+    CompanyProfile,
+    MarketSnapshot,
+    PeerCandidate,
+    PortfolioAlias,
+    PortfolioClassification,
+    ProviderCandidate,
+)
 from beleggingsraadgever.sample_data import seed_demo
 from beleggingsraadgever.storage import SQLiteRepository
 from beleggingsraadgever.backups import list_database_backups
@@ -839,6 +846,37 @@ Soort,Beleggen,Naam,Status,Aantal,Kostpr. per eenheid,Valuta kostpr. per eenheid
             self.assertEqual(portfolio_price.close_price, 32.4)
             self.assertIn("Alle 1 positie(s) hebben actuele snapshots", html)
             self.assertIn("Energy", html)
+
+    def test_portfolio_refresh_does_not_require_fundamentals_for_etfs(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            save_portfolio_position(
+                repo,
+                {
+                    "symbol": ["VWRL"],
+                    "account": ["Hoofdrekening"],
+                    "quantity": ["10"],
+                    "average_cost": ["100"],
+                    "currency": ["EUR"],
+                    "as_of": ["2026-05-01"],
+                },
+            )
+            repo.upsert_portfolio_classification(
+                PortfolioClassification(symbol="VWRL", sector="ETF", theme="Global equities")
+            )
+            repo.upsert_market_snapshot(
+                MarketSnapshot(symbol="VWRL", as_of="2026-05-13", close_price=154.92, currency="EUR")
+            )
+
+            status = portfolio_snapshot_statuses(repo, today=date(2026, 5, 13))[0]
+            html = build_portfolio_page(repo)
+
+            self.assertFalse(status.needs_refresh)
+            self.assertEqual(status.financial_period_type, "ETF/fonds")
+            self.assertNotIn("Fundamentalsnapshot ontbreekt", html)
 
     def test_peer_status_update_creates_versioned_backup(self) -> None:
         import tempfile

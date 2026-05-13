@@ -68,11 +68,11 @@ class PortfolioSnapshotRefreshResult:
         details = (
             f"{self.refreshed_count} bijgewerkt, "
             f"{self.skipped_count} actueel overgeslagen, "
-            f"{self.failed_count} fout(en)"
+            f"{self.failed_count} controlepunt(en)"
         )
         failures = [f"{item.symbol}: {item.error}" for item in self.items if item.error]
         if failures:
-            details += ". Eerste fout: " + failures[0]
+            details += ". Eerste controlepunt: " + failures[0]
         return f"Portefeuille-snapshots ververst: {details}."
 
 
@@ -99,6 +99,7 @@ def portfolio_snapshot_status(
     financial_period_type = ""
     market_age = None
     financial_age = None
+    fundamentals_required = _fundamentals_required(repository, normalized_symbol)
 
     try:
         market = repository.latest_market_snapshot(normalized_symbol)
@@ -111,17 +112,21 @@ def portfolio_snapshot_status(
     except LookupError:
         reasons.append("Koerssnapshot ontbreekt.")
 
-    try:
-        financial = repository.latest_financial_snapshot(normalized_symbol)
-        financial_period_end = financial.period_end
-        financial_period_type = financial.period_type
-        financial_age = _days_old(financial.period_end, today=reference_date)
-        if financial_age is None:
-            reasons.append("Fundamentaldatum is niet leesbaar.")
-        elif financial_age > FUNDAMENTAL_STALE_DAYS:
-            reasons.append(f"Fundamentalsnapshot ouder dan {FUNDAMENTAL_STALE_DAYS} dagen.")
-    except LookupError:
-        reasons.append("Fundamentalsnapshot ontbreekt.")
+    if fundamentals_required:
+        try:
+            financial = repository.latest_financial_snapshot(normalized_symbol)
+            financial_period_end = financial.period_end
+            financial_period_type = financial.period_type
+            financial_age = _days_old(financial.period_end, today=reference_date)
+            if financial_age is None:
+                reasons.append("Fundamentaldatum is niet leesbaar.")
+            elif financial_age > FUNDAMENTAL_STALE_DAYS:
+                reasons.append(f"Fundamentalsnapshot ouder dan {FUNDAMENTAL_STALE_DAYS} dagen.")
+        except LookupError:
+            reasons.append("Fundamentalsnapshot ontbreekt.")
+    else:
+        financial_period_end = "n.v.t."
+        financial_period_type = "ETF/fonds"
 
     return PortfolioSnapshotStatus(
         symbol=normalized_symbol,
@@ -269,6 +274,13 @@ def store_collected_market_data(
             updated_fields.append("classification")
 
     return updated_fields
+
+
+def _fundamentals_required(repository: SQLiteRepository, symbol: str) -> bool:
+    classification = repository.portfolio_classification(symbol)
+    if classification is None:
+        return True
+    return classification.sector.strip().upper() not in {"ETF", "FUND", "FONDS"}
 
 
 def _days_old(value: str, *, today: date) -> Optional[int]:

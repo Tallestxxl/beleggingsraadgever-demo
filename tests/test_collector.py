@@ -7,7 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from beleggingsraadgever.collector import collect_market_data, collect_snapshot_data
+from beleggingsraadgever.collector import DataCollectionError, collect_market_data, collect_snapshot_data
 from beleggingsraadgever.importer import load_company_snapshot
 
 
@@ -61,6 +61,21 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(market.provider_symbol, "AMS:RAND")
         self.assertEqual(market.company_name, "Randstad N.V.")
         self.assertEqual(market.close_price, 20.0)
+
+    def test_collect_market_data_can_use_stockanalysis_etf_pages(self) -> None:
+        market = collect_market_data("XDWH", fetch_text=_fake_stockanalysis_etf_fetch)
+
+        self.assertEqual(market.provider, "StockAnalysis")
+        self.assertEqual(market.provider_symbol, "ETF:XDWH")
+        self.assertEqual(market.as_of, "2026-05-13")
+        self.assertEqual(market.close_price, 68.5)
+        self.assertEqual(market.revenue, None)
+
+    def test_stockanalysis_lookup_ignores_navigation_links(self) -> None:
+        with self.assertRaises(DataCollectionError) as raised:
+            collect_market_data("INVESCO_RAFI_US", fetch_text=_fake_lookup_with_navigation_links)
+
+        self.assertIn("Geen publieke marktdata gevonden", str(raised.exception))
 
     def test_collect_snapshot_data_prefills_market_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -192,6 +207,31 @@ def _fake_randstad_fetch(url: str) -> str:
           ]
         </script>
         <script type="application/ld+json">{{"@type":"Corporation","name":"Randstad N.V.","legalName":"Randstad N.V.","tickerSymbol":"AMS:RAND"}}</script>
+        """
+    return "Page Not Found - 404"
+
+
+def _fake_stockanalysis_etf_fetch(url: str) -> str:
+    if "stockanalysis.com/etf/xdwh/" in url:
+        return """
+        <script>
+          data:[
+            {type:"data",data:{info:{quote:{p:68.5,cl:68.5,td:"2026-05-13"},curr:{price:"EUR",main:"EUR"},nameFull:"Xtrackers MSCI World Health Care UCITS ETF"}}},
+            {type:"data",data:{description:"The fund tracks global health care equities.", sector:"ETF", industry:"Exchange Traded Fund"}}
+          ]
+        </script>
+        """
+    return "Page Not Found - 404"
+
+
+def _fake_lookup_with_navigation_links(url: str) -> str:
+    if any(slug in url for slug in ["stocks/compare", "stocks/earnings-calendar", "stocks/industry"]):
+        raise AssertionError(f"Navigation link was treated as a ticker: {url}")
+    if "symbol-lookup" in url:
+        return """
+        <a href="/stocks/compare/">Compare</a>
+        <a href="/stocks/earnings-calendar/">Earnings Calendar</a>
+        <a href="/stocks/industry/">Industry</a>
         """
     return "Page Not Found - 404"
 
