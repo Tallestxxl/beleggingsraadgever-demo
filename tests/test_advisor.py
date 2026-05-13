@@ -119,6 +119,54 @@ class AdvisorTests(unittest.TestCase):
             self.assertEqual(report.portfolio_fit.securities_value, 1_000)
             self.assertEqual(report.portfolio_fit.total_wealth, 251_000)
 
+    def test_historical_analysis_uses_stored_snapshots(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            for period_end, revenue, operating_margin, free_cash_flow, debt, dividend in [
+                ("2023-12-31", 900_000_000, 0.12, 90_000_000, 270_000_000, 1.00),
+                ("2024-12-31", 1_000_000_000, 0.14, 120_000_000, 240_000_000, 1.10),
+                ("2025-12-31", 1_200_000_000, 0.18, 180_000_000, 180_000_000, 1.25),
+            ]:
+                repo.upsert_financial_snapshot(
+                    FinancialSnapshot(
+                        symbol="TREND",
+                        period_end=period_end,
+                        period_type="FY",
+                        revenue=revenue,
+                        operating_margin=operating_margin,
+                        free_cash_flow=free_cash_flow,
+                        debt=debt,
+                        dividend_per_share=dividend,
+                    )
+                )
+            for as_of, close_price, pe_ratio, fcf_yield in [
+                ("2024-05-05", 40, 24, 0.05),
+                ("2025-05-05", 50, 18, 0.08),
+            ]:
+                repo.upsert_market_snapshot(
+                    MarketSnapshot(
+                        symbol="TREND",
+                        as_of=as_of,
+                        close_price=close_price,
+                        currency="EUR",
+                        pe_ratio=pe_ratio,
+                        fcf_yield=fcf_yield,
+                    )
+                )
+
+            report = Advisor(repo).analyze("TREND")
+            markdown = Advisor(repo).render_markdown(report)
+            metrics = {row.metric: row for row in report.historical_analysis.rows}
+
+            self.assertEqual(report.historical_analysis.financial_period_count, 3)
+            self.assertIn("Omzet", metrics)
+            self.assertIn("Operationele marge", metrics)
+            self.assertIn("Schuld/FCF", metrics)
+            self.assertEqual(metrics["Schuld/FCF"].interpretation, "verbeterd")
+            self.assertIn("Historische trend", markdown)
+            self.assertIn("omzet", report.historical_analysis.summary.lower())
+
     def test_portfolio_fit_warns_for_semiconductor_concentration_on_asmi(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo = SQLiteRepository(Path(tmp) / "test.sqlite")

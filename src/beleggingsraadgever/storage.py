@@ -1315,6 +1315,49 @@ class SQLiteRepository:
             buyback_value=row["buyback_value"],
         )
 
+    def financial_history(
+        self,
+        symbol: str,
+        *,
+        period_type: Optional[str] = None,
+        limit: int = 5,
+    ) -> List[FinancialSnapshot]:
+        params: list[object] = [symbol.upper()]
+        period_filter = ""
+        if period_type:
+            period_filter = "AND period_type = ?"
+            params.append(period_type)
+        params.append(limit)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM financial_snapshots
+                WHERE symbol = ?
+                  {period_filter}
+                ORDER BY period_end DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [
+            FinancialSnapshot(
+                symbol=row["symbol"],
+                period_end=row["period_end"],
+                period_type=row["period_type"],
+                revenue=row["revenue"],
+                gross_margin=row["gross_margin"],
+                operating_margin=row["operating_margin"],
+                net_margin=row["net_margin"],
+                free_cash_flow=row["free_cash_flow"],
+                debt=row["debt"],
+                cash=row["cash"],
+                shares_outstanding=row["shares_outstanding"],
+                dividend_per_share=row["dividend_per_share"],
+                buyback_value=row["buyback_value"],
+            )
+            for row in reversed(rows)
+        ]
+
     def latest_market_snapshot(self, symbol: str) -> MarketSnapshot:
         with self.connect() as conn:
             row = conn.execute(
@@ -1340,6 +1383,33 @@ class SQLiteRepository:
             momentum_12m=row["momentum_12m"],
             volatility_1y=row["volatility_1y"],
         )
+
+    def market_history(self, symbol: str, *, limit: int = 5) -> List[MarketSnapshot]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM market_snapshots
+                WHERE symbol = ?
+                ORDER BY as_of DESC
+                LIMIT ?
+                """,
+                (symbol.upper(), limit),
+            ).fetchall()
+        return [
+            MarketSnapshot(
+                symbol=row["symbol"],
+                as_of=row["as_of"],
+                close_price=row["close_price"],
+                currency=row["currency"],
+                pe_ratio=row["pe_ratio"],
+                ev_ebitda=row["ev_ebitda"],
+                fcf_yield=row["fcf_yield"],
+                dividend_yield=row["dividend_yield"],
+                momentum_12m=row["momentum_12m"],
+                volatility_1y=row["volatility_1y"],
+            )
+            for row in reversed(rows)
+        ]
 
     def symbols_with_snapshots(self) -> List[str]:
         with self.connect() as conn:

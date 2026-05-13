@@ -283,6 +283,27 @@ class PeerAnalysis:
 
 
 @dataclass(frozen=True)
+class HistoricalTrendRow:
+    metric: str
+    start_label: str
+    end_label: str
+    start_value: Optional[float]
+    end_value: Optional[float]
+    value_kind: str
+    change_label: str
+    interpretation: str = ""
+
+
+@dataclass(frozen=True)
+class HistoricalAnalysis:
+    summary: str
+    rows: List[HistoricalTrendRow]
+    notes: List[str] = field(default_factory=list)
+    financial_period_count: int = 0
+    market_point_count: int = 0
+
+
+@dataclass(frozen=True)
 class PeerCandidate:
     symbol: str
     peer_symbol: str
@@ -321,4 +342,5 @@ class AdviceReport:
     data_sources: List[DataSource] = field(default_factory=list)
     portfolio_fit: Optional[PortfolioFit] = None
     peer_analysis: Optional[PeerAnalysis] = None
+    historical_analysis: Optional[HistoricalAnalysis] = None
     evidence_diagnostics: Optional[EvidenceDiagnostics] = None

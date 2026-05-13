@@ -6,6 +6,7 @@ import html
 from typing import Optional
 from urllib.parse import quote_plus
 
+from .history import format_historical_value
 from .knowledge import tokenize
 from .knowledge_scope import knowledge_scope_from_tags
 from .models import AdviceReport
@@ -34,6 +35,7 @@ def render_report(report: AdviceReport, v1_status: Optional[V1StatusRow] = None)
         evidence = '<p class="evidence-meta">Geen relevante fragmenten gevonden in de lokale kennisbank.</p>'
     evidence_diagnostics = render_evidence_diagnostics(report)
     peer_analysis = render_peer_analysis(report)
+    historical_analysis = render_historical_analysis(report)
 
     freshness = "".join(
         f"<li>{html.escape(name)}: {html.escape(value)}</li>"
@@ -123,6 +125,7 @@ def render_report(report: AdviceReport, v1_status: Optional[V1StatusRow] = None)
           </div>
         </section>
         {peer_analysis}
+        {historical_analysis}
         {flags}
         <section>
           <h3>Relevante kennisbank-fragmenten</h3>
@@ -149,6 +152,38 @@ def render_report(report: AdviceReport, v1_status: Optional[V1StatusRow] = None)
         </section>
       </div>
     </div>"""
+
+
+def render_historical_analysis(report: AdviceReport) -> str:
+    analysis = report.historical_analysis
+    if analysis is None:
+        return ""
+    rows = "".join(
+        f"""
+        <tr>
+          <td>{html.escape(row.metric)}</td>
+          <td>{html.escape(format_historical_value(row.start_value, row.value_kind))}</td>
+          <td>{html.escape(row.start_label)}</td>
+          <td>{html.escape(format_historical_value(row.end_value, row.value_kind))}</td>
+          <td>{html.escape(row.end_label)}</td>
+          <td>{html.escape(row.change_label)}</td>
+          <td>{html.escape(row.interpretation)}</td>
+        </tr>"""
+        for row in analysis.rows
+    )
+    notes = "".join(f"<li>{html.escape(note)}</li>" for note in analysis.notes)
+    if not rows:
+        rows = '<tr><td colspan="7">Nog onvoldoende historische snapshots.</td></tr>'
+    return f"""
+        <section>
+          <h3>Historische trend</h3>
+          <p class="summary">{html.escape(analysis.summary)}</p>
+          <table class="data-table">
+            <thead><tr><th>Metriek</th><th>Start</th><th>Periode</th><th>Laatste</th><th>Periode</th><th>Verandering</th><th>Duiding</th></tr></thead>
+            <tbody>{rows}</tbody>
+          </table>
+          {f'<ul class="assumption-list">{notes}</ul>' if notes else ''}
+        </section>"""
 
 
 def render_peer_analysis(report: AdviceReport) -> str:

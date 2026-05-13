@@ -6,6 +6,7 @@ from datetime import date
 from typing import List, Optional
 
 from .formatting import format_currency
+from .history import build_historical_analysis, format_historical_value
 from .identity import aliases_for_data_sources, candidate_portfolio_symbols, normalize_symbol
 from .indicators import build_score, conviction_from_score, verdict_from_score
 from .knowledge_scope import knowledge_scope_from_tags, scope_matches_analysis
@@ -73,6 +74,7 @@ class Advisor:
             market,
             extra_snapshots=peer_snapshots,
         )
+        historical_analysis = build_historical_analysis(self.repository, normalized_symbol, financial, market)
 
         summary = self._build_summary(normalized_symbol, financial, market, verdict, score)
         data_freshness = {
@@ -101,6 +103,7 @@ class Advisor:
             data_sources=data_sources,
             portfolio_fit=portfolio_fit,
             peer_analysis=peer_analysis,
+            historical_analysis=historical_analysis,
             evidence_diagnostics=evidence_diagnostics,
         )
 
@@ -147,6 +150,18 @@ class Advisor:
                     f"FCF-yield {_format_percent_plain(row.fcf_yield)}"
                 )
             lines.extend(f"- {note}" for note in report.peer_analysis.notes)
+            lines.append("")
+
+        if report.historical_analysis:
+            history = report.historical_analysis
+            lines.extend(["## Historische trend", "", history.summary, ""])
+            for row in history.rows:
+                lines.append(
+                    f"- {row.metric}: {format_historical_value(row.start_value, row.value_kind)} "
+                    f"({row.start_label}) -> {format_historical_value(row.end_value, row.value_kind)} "
+                    f"({row.end_label}); {row.change_label}, {row.interpretation}."
+                )
+            lines.extend(f"- {note}" for note in history.notes)
             lines.append("")
 
         lines.extend(["## Relevante kennisbank-fragmenten", ""])
