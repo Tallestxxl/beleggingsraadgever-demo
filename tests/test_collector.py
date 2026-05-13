@@ -54,6 +54,14 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(market.close_price, 20.0)
         self.assertEqual(market.revenue, 1_000_000_000)
 
+    def test_collect_market_data_prefers_known_exchange_symbol_for_ticker_collision(self) -> None:
+        market = collect_market_data("RAND", fetch_text=_fake_randstad_fetch)
+
+        self.assertEqual(market.provider, "StockAnalysis")
+        self.assertEqual(market.provider_symbol, "AMS:RAND")
+        self.assertEqual(market.company_name, "Randstad N.V.")
+        self.assertEqual(market.close_price, 20.0)
+
     def test_collect_snapshot_data_prefills_market_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "fugro.json"
@@ -162,6 +170,29 @@ def _fake_philips_lookup_fetch(url: str) -> str:
         return _fake_stockanalysis_statistics_html()
     if "stockanalysis.com/quote/ams/PHIA/" in url:
         return _fake_philips_overview_html()
+    return "Page Not Found - 404"
+
+
+def _fake_randstad_fetch(url: str) -> str:
+    if "stocks/rand/" in url:
+        raise AssertionError(f"US ticker collision should not be tried before AMS quote: {url}")
+    if "financials" in url and "quote/ams/RAND" in url:
+        return _fake_stockanalysis_financials_html()
+    if "statistics" in url and "quote/ams/RAND" in url:
+        return _fake_stockanalysis_statistics_html()
+    if "stockanalysis.com/quote/ams/RAND/" in url:
+        return f"""
+        <script>
+          data: [
+            {{type:"data",data:{{info:{{quote:{{p:42.1,cl:42.0,td:"2026-04-30"}},curr:{{price:"EUR",main:"EUR"}},nameFull:"Randstad N.V."}}}}}},
+            {{type:"data",data:{{description:"Randstad N.V. provides staffing and workforce solutions.",
+              sector:"Industrials", industry:"Staffing & Employment Services",
+              chart:{{expiration:0,data:[{_fake_chart_points()}]}},
+              changes:{{price1y:10.0}}}}}}
+          ]
+        </script>
+        <script type="application/ld+json">{{"@type":"Corporation","name":"Randstad N.V.","legalName":"Randstad N.V.","tickerSymbol":"AMS:RAND"}}</script>
+        """
     return "Page Not Found - 404"
 
 

@@ -34,6 +34,7 @@ AMSTERDAM_ALIASES = {
     "FUGRO": "FUR",
     "ING": "INGA",
     "KPN": "KPN",
+    "RAND": "RAND",
     "SHELL": "SHELL",
 }
 
