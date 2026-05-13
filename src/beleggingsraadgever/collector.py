@@ -92,7 +92,12 @@ class CollectionResult:
         return not self.errors
 
 
-def collect_snapshot_data(symbol: str, path: Optional[Path] = None, fetch_text: Optional[FetchText] = None) -> CollectionResult:
+def collect_snapshot_data(
+    symbol: str,
+    path: Optional[Path] = None,
+    fetch_text: Optional[FetchText] = None,
+    preferred_stockanalysis_symbols: Optional[list[str]] = None,
+) -> CollectionResult:
     """Collect public market data and prefill a draft snapshot."""
 
     normalized_symbol = symbol.strip().upper()
@@ -103,7 +108,11 @@ def collect_snapshot_data(symbol: str, path: Optional[Path] = None, fetch_text: 
     fetcher = fetch_text or _fetch_url_text
     messages: List[str] = []
     try:
-        market_data = collect_market_data(normalized_symbol, fetcher)
+        market_data = collect_market_data(
+            normalized_symbol,
+            fetcher,
+            preferred_stockanalysis_symbols=preferred_stockanalysis_symbols,
+        )
     except DataCollectionError as error:
         errors = [str(error)]
         errors.extend(validate_company_snapshot(load_company_snapshot(destination)))
@@ -123,13 +132,17 @@ def collect_snapshot_data(symbol: str, path: Optional[Path] = None, fetch_text: 
     )
 
 
-def collect_market_data(symbol: str, fetch_text: Optional[FetchText] = None) -> MarketData:
+def collect_market_data(
+    symbol: str,
+    fetch_text: Optional[FetchText] = None,
+    preferred_stockanalysis_symbols: Optional[list[str]] = None,
+) -> MarketData:
     """Collect latest EOD market data for a symbol from public sources."""
 
     fetcher = fetch_text or _fetch_url_text
     errors: List[str] = []
     tried_stockanalysis_urls = set()
-    for candidate in _stockanalysis_candidates(symbol):
+    for candidate in _stockanalysis_candidates(symbol, preferred_provider_symbols=preferred_stockanalysis_symbols):
         tried_stockanalysis_urls.add(candidate.source_url)
         try:
             overview_html = fetcher(candidate.source_url)
@@ -322,9 +335,17 @@ def _fetch_url_text(url: str) -> str:
         return response.read().decode("utf-8")
 
 
-def _stockanalysis_candidates(symbol: str) -> Iterable[StockAnalysisCandidate]:
+def _stockanalysis_candidates(
+    symbol: str,
+    preferred_provider_symbols: Optional[list[str]] = None,
+) -> Iterable[StockAnalysisCandidate]:
     normalized_symbol = symbol.strip().upper()
     candidates: List[tuple[str, str]] = []
+
+    for provider_symbol in preferred_provider_symbols or []:
+        preferred = _stockanalysis_candidate_from_provider_symbol(provider_symbol)
+        if preferred is not None:
+            candidates.append((preferred.provider_symbol, _stockanalysis_path_from_url(preferred.source_url)))
 
     if ":" in normalized_symbol:
         exchange, ticker = normalized_symbol.split(":", 1)
@@ -354,6 +375,26 @@ def _stockanalysis_candidates(symbol: str) -> Iterable[StockAnalysisCandidate]:
             statistics_url=f"{base_url}statistics/",
             financials_url=f"{base_url}financials/",
         )
+
+
+def _stockanalysis_candidate_from_provider_symbol(provider_symbol: str) -> Optional[StockAnalysisCandidate]:
+    symbol = provider_symbol.strip().upper()
+    if not symbol:
+        return None
+    if ":" in symbol:
+        exchange, ticker = symbol.split(":", 1)
+        exchange = exchange.strip().lower()
+        ticker = ticker.strip().upper()
+        if not exchange or not _is_ticker_like(ticker):
+            return None
+        return _stockanalysis_candidate_from_path(f"{exchange.upper()}:{ticker}", f"quote/{exchange}/{ticker}/")
+    if not _is_ticker_like(symbol):
+        return None
+    return _stockanalysis_candidate_from_path(symbol, f"stocks/{symbol.lower()}/")
+
+
+def _stockanalysis_path_from_url(url: str) -> str:
+    return url.removeprefix("https://stockanalysis.com/")
 
 
 def _stockanalysis_lookup_url(symbol: str) -> str:

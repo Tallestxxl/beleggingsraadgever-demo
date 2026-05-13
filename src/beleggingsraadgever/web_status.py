@@ -13,6 +13,7 @@ from urllib.parse import quote_plus
 from .backups import create_database_backup
 from .peers import MIN_PEERS
 from .peer_discovery import refresh_peer_candidates, refresh_peer_candidates_for_portfolio
+from .provider_identity import refresh_provider_candidates, refresh_provider_candidates_for_portfolio
 from .storage import SQLiteRepository
 from .symbol_resolution import resolve_analysis_symbol
 from .web_components import render_status_pill
@@ -58,6 +59,41 @@ def refresh_peer_candidates_workflow(repository: SQLiteRepository, params: dict)
         return "Geen aandeel ontvangen"
     candidates = refresh_peer_candidates(repository, symbol)
     return f"Peer-kandidaten voor {symbol} herberekend: {len(candidates)}"
+
+
+def refresh_provider_candidates_workflow(repository: SQLiteRepository, params: dict) -> str:
+    symbol = _first_param(params, "symbol").upper()
+    if symbol == "__ALL__":
+        refreshed = refresh_provider_candidates_for_portfolio(repository)
+        count = sum(len(candidates) for candidates in refreshed.values())
+        return f"Provider-kandidaten herberekend: {count}"
+    if not symbol:
+        return "Geen aandeel ontvangen"
+    candidates = refresh_provider_candidates(repository, symbol)
+    return f"Provider-kandidaten voor {symbol} herberekend: {len(candidates)}"
+
+
+def update_provider_candidate_status_workflow(repository: SQLiteRepository, params: dict) -> str:
+    symbol = _first_param(params, "symbol").upper()
+    provider = _first_param(params, "provider")
+    provider_symbol = _first_param(params, "provider_symbol").upper()
+    status = _first_param(params, "status")
+    if not symbol or not provider or not provider_symbol:
+        raise ValueError("Aandeel, provider en provider-symbol zijn verplicht.")
+    if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
+        raise ValueError("Onbekende providerstatus.")
+    updated = repository.update_provider_candidate_status(symbol, provider, provider_symbol, status)
+    if not updated:
+        raise ValueError(f"Provider-kandidaat {provider_symbol} voor {symbol} is niet gevonden.")
+    labels = {
+        "vertrouwd": "vertrouwd",
+        "voorgesteld": "teruggezet als voorstel",
+        "verworpen": "verworpen",
+    }
+    return (
+        f"Provider-kandidaat {provider_symbol} voor {symbol} is {labels[status]}. "
+        f"{_backup_message(repository, f'providerstatus-{symbol}-{provider_symbol}-{status}')}"
+    )
 
 
 def update_peer_candidate_status_workflow(repository: SQLiteRepository, params: dict) -> str:
@@ -136,8 +172,17 @@ def render_v1_status_dashboard(
           <input type="hidden" name="symbol" value="__ALL__">
           <button type="submit">Herbereken alle peer-kandidaten</button>
         </form>
+        <form method="post" action="/status/refresh-providers">
+          <input type="hidden" name="symbol" value="__ALL__">
+          <button type="submit">Zoek provider-kandidaten</button>
+        </form>
       </div>
       {render_v1_status_table(rows)}
+    </section>
+    <section>
+      <h3>Provider-kandidaten beoordelen</h3>
+      <p class="summary">Vertrouw alleen de providerkoppeling die echt bij het aandeel hoort. Vertrouwde provider-symbolen sturen de datacollector, zodat tickerbotsingen zoals lokale en Amerikaanse noteringen niet blind worden gekozen.</p>
+      {render_provider_candidate_review_table(repository, symbols)}
     </section>
     <section>
       <h3>Peer-kandidaten beoordelen</h3>
@@ -192,7 +237,83 @@ def render_v1_status_actions(symbol: str) -> str:
                 <input type="hidden" name="symbol" value="{escaped_symbol}">
                 <button type="submit">Zoek peer-kandidaten</button>
               </form>
+              <form method="post" action="/status/refresh-providers">
+                <input type="hidden" name="symbol" value="{escaped_symbol}">
+                <button type="submit">Zoek provider</button>
+              </form>
             </div>"""
+
+
+def render_provider_candidate_review_table(
+    repository: SQLiteRepository,
+    symbols: list[str],
+    return_to: str = "",
+) -> str:
+    grouped = repository.provider_candidates_for_symbols(symbols)
+    candidates = [
+        candidate
+        for symbol in symbols
+        for candidate in grouped.get(symbol.upper(), [])
+    ]
+    if not candidates:
+        return '<p class="evidence-meta">Nog geen provider-kandidaten gevonden. Gebruik eerst Zoek provider of Zoek provider-kandidaten.</p>'
+    body = "".join(render_provider_candidate_review_row(candidate, return_to=return_to) for candidate in candidates)
+    return f"""
+          <table class="data-table">
+            <thead>
+              <tr><th>Aandeel</th><th>Provider</th><th>Provider-symbol</th><th>Naam</th><th>Status</th><th>Bron</th><th>Confidence</th><th>Reden</th><th>Acties</th></tr>
+            </thead>
+            <tbody>{body}</tbody>
+          </table>"""
+
+
+def render_provider_candidate_review_row(candidate, return_to: str = "") -> str:
+    status_class = "ok" if candidate.status == "vertrouwd" else "danger" if candidate.status == "verworpen" else "warn"
+    provider_symbol = html.escape(candidate.provider_symbol)
+    if candidate.source_url:
+        provider_symbol = f'<a href="{html.escape(candidate.source_url)}" target="_blank" rel="noreferrer">{provider_symbol}</a>'
+    return f"""
+        <tr>
+          <td>{html.escape(candidate.symbol)}</td>
+          <td>{html.escape(candidate.provider)}</td>
+          <td><strong>{provider_symbol}</strong></td>
+          <td>{html.escape(candidate.provider_name or "n.b.")}</td>
+          <td>{render_status_pill(candidate.status, status_class)}</td>
+          <td>{html.escape(candidate.source)}</td>
+          <td>{candidate.confidence:.0%}</td>
+          <td>{html.escape(candidate.reason)}</td>
+          <td>{render_provider_candidate_status_actions(candidate, return_to=return_to)}</td>
+        </tr>"""
+
+
+def render_provider_candidate_status_actions(candidate, return_to: str = "") -> str:
+    buttons = []
+    if candidate.status != "vertrouwd":
+        buttons.append(render_provider_status_form(candidate, "vertrouwd", "Vertrouw", return_to=return_to))
+    if candidate.status != "verworpen":
+        buttons.append(render_provider_status_form(candidate, "verworpen", "Verwerp", return_to=return_to))
+    if candidate.status == "verworpen":
+        buttons.append(
+            render_provider_status_form(candidate, "voorgesteld", "Zet terug als voorstel", return_to=return_to)
+        )
+    return f'<div class="status-actions">{"".join(buttons)}</div>'
+
+
+def render_provider_status_form(candidate, status: str, label: str, return_to: str = "") -> str:
+    return_field = (
+        f'<input type="hidden" name="return_to" value="{html.escape(return_to)}">'
+        if return_to
+        else ""
+    )
+    return f"""
+              <form method="post" action="/status/provider-status">
+                <input type="hidden" name="symbol" value="{html.escape(candidate.symbol)}">
+                <input type="hidden" name="provider" value="{html.escape(candidate.provider)}">
+                <input type="hidden" name="provider_symbol" value="{html.escape(candidate.provider_symbol)}">
+                <input type="hidden" name="status" value="{html.escape(status)}">
+                {return_field}
+                <button type="submit">{html.escape(label)}</button>
+              </form>"""
 
 
 def render_peer_candidate_review_table(repository: SQLiteRepository, symbols: list[str]) -> str:
@@ -309,6 +430,9 @@ def _v1_identity_status(
         if alias.alias_key != symbol or alias.alias_type != "portfolio_symbol"
     ]
     profile = repository.company_profile(symbol)
+    provider_candidates = repository.provider_candidates_for_symbol(symbol)
+    trusted_providers = [candidate for candidate in provider_candidates if candidate.status == "vertrouwd"]
+    proposed_providers = [candidate for candidate in provider_candidates if candidate.status == "voorgesteld"]
     if profile and profile.provider_symbol:
         alias_text = f", {len(visible_aliases)} alias(s)" if visible_aliases else ""
         suspicious_alias = _provider_name_mismatch(profile.company_name, profile.description, visible_aliases)
@@ -324,7 +448,24 @@ def _v1_identity_status(
                     f"providernaam {profile.company_name or 'onbekend'} matcht niet met alias {suspicious_alias}."
                 ),
             )
+        trusted_match = next(
+            (
+                candidate
+                for candidate in trusted_providers
+                if candidate.provider_symbol.upper() == profile.provider_symbol.upper()
+            ),
+            None,
+        )
+        if trusted_match:
+            return "OK", f"Vertrouwde provider {trusted_match.provider_symbol}{alias_text}."
         return "OK", f"Provider-symbol {profile.provider_symbol}{alias_text}."
+    if trusted_providers:
+        trusted = trusted_providers[0]
+        alias_text = f", {len(visible_aliases)} alias(s)" if visible_aliases else ""
+        return "OK", f"Vertrouwde provider {trusted.provider_symbol}{alias_text}; providerprofiel ontbreekt nog."
+    if proposed_providers:
+        warnings.append(f"Providerkoppeling voor {symbol} is nog niet vertrouwd.")
+        return "Controle", f"{len(proposed_providers)} provider-kandidaat/kandidaten voorgesteld."
     if visible_aliases:
         return "OK", f"{len(visible_aliases)} alias(s) gekoppeld; providerprofiel ontbreekt nog."
     warnings.append("Identiteitskoppeling is alleen een directe ticker; controleer provider-symbolen bij naam/tickerverwarring.")

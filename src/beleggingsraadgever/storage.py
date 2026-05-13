@@ -27,6 +27,7 @@ from .models import (
     PortfolioPositionPerformance,
     PortfolioPosition,
     Principle,
+    ProviderCandidate,
 )
 
 DEFAULT_DB_PATH = Path("data/local/beleggingsraadgever.sqlite")
@@ -268,6 +269,23 @@ CREATE TABLE IF NOT EXISTS peer_candidates (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY(symbol, peer_symbol)
+);
+
+CREATE TABLE IF NOT EXISTS provider_candidates (
+  symbol TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  provider_symbol TEXT NOT NULL,
+  provider_name TEXT NOT NULL DEFAULT '',
+  source_url TEXT NOT NULL DEFAULT '',
+  exchange TEXT NOT NULL DEFAULT '',
+  currency TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT '',
+  confidence REAL NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'voorgesteld',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(symbol, provider, provider_symbol)
 );
 """
 
@@ -1527,3 +1545,225 @@ class SQLiteRepository:
                 )
             )
         return grouped
+
+    def replace_provider_candidates(self, symbol: str, candidates: Iterable[ProviderCandidate]) -> None:
+        normalized_symbol = symbol.upper()
+        with self.connect() as conn:
+            existing_rows = conn.execute(
+                """
+                SELECT symbol, provider, provider_symbol, provider_name, source_url, exchange, currency,
+                       source, confidence, reason, status
+                FROM provider_candidates
+                WHERE symbol = ?
+                """,
+                (normalized_symbol,),
+            ).fetchall()
+            existing_by_key = {(row["provider"], row["provider_symbol"]): row for row in existing_rows}
+            preserved_rows = [
+                row
+                for row in existing_rows
+                if row["status"] == "verworpen" or row["source"] == "user_approved"
+            ]
+            conn.execute("DELETE FROM provider_candidates WHERE symbol = ?", (normalized_symbol,))
+            seen_keys = set()
+            for candidate in candidates:
+                provider = candidate.provider.strip() or "Onbekend"
+                provider_symbol = candidate.provider_symbol.strip().upper()
+                if not provider_symbol:
+                    continue
+                key = (provider, provider_symbol)
+                existing = existing_by_key.get(key)
+                seen_keys.add(key)
+                status = candidate.status
+                source = candidate.source
+                confidence = candidate.confidence
+                reason = candidate.reason
+                if existing is not None and existing["status"] == "verworpen":
+                    continue
+                if existing is not None and existing["status"] == "vertrouwd":
+                    status = "vertrouwd"
+                    source = existing["source"] or "user_approved"
+                    confidence = max(float(existing["confidence"]), candidate.confidence)
+                    reason = existing["reason"] or "Door gebruiker vertrouwd."
+                self._upsert_provider_candidate(
+                    conn,
+                    ProviderCandidate(
+                        symbol=normalized_symbol,
+                        provider=provider,
+                        provider_symbol=provider_symbol,
+                        provider_name=candidate.provider_name,
+                        source_url=candidate.source_url,
+                        exchange=candidate.exchange,
+                        currency=candidate.currency,
+                        source=source,
+                        confidence=confidence,
+                        reason=reason,
+                        status=status,
+                    ),
+                )
+            for row in preserved_rows:
+                key = (row["provider"], row["provider_symbol"])
+                if key in seen_keys and row["status"] != "verworpen":
+                    continue
+                self._upsert_provider_candidate(
+                    conn,
+                    ProviderCandidate(
+                        symbol=row["symbol"],
+                        provider=row["provider"],
+                        provider_symbol=row["provider_symbol"],
+                        provider_name=row["provider_name"],
+                        source_url=row["source_url"],
+                        exchange=row["exchange"],
+                        currency=row["currency"],
+                        source=row["source"],
+                        confidence=row["confidence"],
+                        reason=row["reason"],
+                        status=row["status"],
+                    ),
+                )
+
+    def _upsert_provider_candidate(self, conn: sqlite3.Connection, candidate: ProviderCandidate) -> None:
+        conn.execute(
+            """
+            INSERT INTO provider_candidates
+              (symbol, provider, provider_symbol, provider_name, source_url, exchange, currency,
+               source, confidence, reason, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol, provider, provider_symbol) DO UPDATE SET
+              provider_name=excluded.provider_name,
+              source_url=excluded.source_url,
+              exchange=excluded.exchange,
+              currency=excluded.currency,
+              source=excluded.source,
+              confidence=excluded.confidence,
+              reason=excluded.reason,
+              status=excluded.status,
+              updated_at=CURRENT_TIMESTAMP
+            """,
+            (
+                candidate.symbol.upper(),
+                candidate.provider,
+                candidate.provider_symbol.upper(),
+                candidate.provider_name,
+                candidate.source_url,
+                candidate.exchange,
+                candidate.currency,
+                candidate.source,
+                candidate.confidence,
+                candidate.reason,
+                candidate.status,
+            ),
+        )
+
+    def update_provider_candidate_status(
+        self,
+        symbol: str,
+        provider: str,
+        provider_symbol: str,
+        status: str,
+        reason: str = "",
+    ) -> bool:
+        if status not in {"vertrouwd", "voorgesteld", "verworpen"}:
+            raise ValueError("Onbekende providerstatus.")
+        normalized_symbol = symbol.upper()
+        normalized_provider_symbol = provider_symbol.upper()
+        if status == "vertrouwd":
+            source = "user_approved"
+        elif status == "verworpen":
+            source = "user_rejected"
+        else:
+            source = "user_review"
+        default_reasons = {
+            "vertrouwd": "Door gebruiker vertrouwd.",
+            "voorgesteld": "Door gebruiker teruggezet als voorstel.",
+            "verworpen": "Door gebruiker verworpen.",
+        }
+        with self.connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT symbol, provider, provider_symbol
+                FROM provider_candidates
+                WHERE symbol = ? AND provider = ? AND provider_symbol = ?
+                """,
+                (normalized_symbol, provider, normalized_provider_symbol),
+            ).fetchone()
+            if existing is None:
+                return False
+            conn.execute(
+                """
+                UPDATE provider_candidates
+                SET status = ?,
+                    source = ?,
+                    confidence = CASE WHEN ? = 'vertrouwd' THEN MAX(confidence, 0.95) ELSE confidence END,
+                    reason = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE symbol = ? AND provider = ? AND provider_symbol = ?
+                """,
+                (
+                    status,
+                    source,
+                    status,
+                    reason or default_reasons[status],
+                    normalized_symbol,
+                    provider,
+                    normalized_provider_symbol,
+                ),
+            )
+            return True
+
+    def provider_candidates_for_symbol(self, symbol: str) -> List[ProviderCandidate]:
+        with self.connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT symbol, provider, provider_symbol, provider_name, source_url, exchange, currency,
+                       source, confidence, reason, status
+                FROM provider_candidates
+                WHERE symbol = ?
+                ORDER BY CASE status WHEN 'vertrouwd' THEN 0 WHEN 'voorgesteld' THEN 1 ELSE 2 END,
+                         confidence DESC, provider, provider_symbol
+                """,
+                (symbol.upper(),),
+            ).fetchall()
+        return [self._provider_candidate_from_row(row) for row in rows]
+
+    def provider_candidates_for_symbols(self, symbols: Iterable[str]) -> dict[str, List[ProviderCandidate]]:
+        normalized = sorted({symbol.upper() for symbol in symbols if symbol})
+        if not normalized:
+            return {}
+        placeholders = ",".join("?" for _ in normalized)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT symbol, provider, provider_symbol, provider_name, source_url, exchange, currency,
+                       source, confidence, reason, status
+                FROM provider_candidates
+                WHERE symbol IN ({placeholders})
+                ORDER BY symbol,
+                         CASE status WHEN 'vertrouwd' THEN 0 WHEN 'voorgesteld' THEN 1 ELSE 2 END,
+                         confidence DESC, provider, provider_symbol
+                """,
+                normalized,
+            ).fetchall()
+        grouped: dict[str, List[ProviderCandidate]] = {symbol: [] for symbol in normalized}
+        for row in rows:
+            grouped.setdefault(row["symbol"], []).append(self._provider_candidate_from_row(row))
+        return grouped
+
+    def trusted_provider_candidates(self, symbol: str) -> List[ProviderCandidate]:
+        return [candidate for candidate in self.provider_candidates_for_symbol(symbol) if candidate.status == "vertrouwd"]
+
+    @staticmethod
+    def _provider_candidate_from_row(row: sqlite3.Row) -> ProviderCandidate:
+        return ProviderCandidate(
+            symbol=row["symbol"],
+            provider=row["provider"],
+            provider_symbol=row["provider_symbol"],
+            provider_name=row["provider_name"],
+            source_url=row["source_url"],
+            exchange=row["exchange"],
+            currency=row["currency"],
+            source=row["source"],
+            confidence=row["confidence"],
+            reason=row["reason"],
+            status=row["status"],
+        )

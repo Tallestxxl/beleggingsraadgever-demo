@@ -44,7 +44,9 @@ from .web_snapshot import (
 from .web_status import (
     build_status_page,
     build_v1_status_row,
+    refresh_provider_candidates_workflow,
     refresh_peer_candidates_workflow,
+    update_provider_candidate_status_workflow,
     update_peer_candidate_status_workflow,
 )
 from .web_portfolio import (
@@ -132,7 +134,7 @@ def _make_handler(repository: SQLiteRepository):
                 try:
                     report = Advisor(repository).analyze(symbol, peer_snapshots=local_peer_snapshots())
                 except LookupError:
-                    workflow = ensure_snapshot_workflow(symbol, auto_collect=True)
+                    workflow = ensure_snapshot_workflow(symbol, auto_collect=True, repository=repository)
                     report = build_draft_report(repository, workflow)
 
             self._send_html(build_page(symbol=symbol, report=report, error=error, workflow=workflow, repository=repository))
@@ -151,6 +153,8 @@ def _make_handler(repository: SQLiteRepository):
                 "/knowledge/import",
                 "/knowledge/status",
                 "/status/refresh-peers",
+                "/status/refresh-providers",
+                "/status/provider-status",
                 "/status/peer-status",
             }:
                 self.send_error(HTTPStatus.NOT_FOUND)
@@ -163,6 +167,22 @@ def _make_handler(repository: SQLiteRepository):
             if parsed.path == "/status/refresh-peers":
                 message = refresh_peer_candidates_workflow(repository, params)
                 self._redirect(f"/status?message={quote_plus(message)}")
+                return
+
+            if parsed.path == "/status/refresh-providers":
+                return_to = safe_return_path(_first_param(params, "return_to"))
+                message = refresh_provider_candidates_workflow(repository, params)
+                self._redirect(redirect_with_message(return_to or "/status", message))
+                return
+
+            if parsed.path == "/status/provider-status":
+                return_to = safe_return_path(_first_param(params, "return_to"))
+                try:
+                    message = update_provider_candidate_status_workflow(repository, params)
+                except ValueError as error:
+                    self._redirect(redirect_with_message(return_to or "/status", str(error)))
+                    return
+                self._redirect(redirect_with_message(return_to or "/status", message))
                 return
 
             if parsed.path == "/status/peer-status":
@@ -250,15 +270,17 @@ def _make_handler(repository: SQLiteRepository):
                 return
 
             if parsed.path == "/workflow/collect":
-                workflow = collect_snapshot_workflow(symbol)
+                workflow = collect_snapshot_workflow(symbol, repository=repository)
                 report = build_draft_report(repository, workflow)
-                self._send_html(build_page(symbol=symbol, report=report, workflow=workflow))
+                self._send_html(build_page(symbol=symbol, report=report, workflow=workflow, repository=repository))
                 return
 
             if parsed.path == "/workflow/note":
                 workflow, note_error = save_case_note_workflow(symbol, params)
                 report = build_draft_report(repository, workflow)
-                self._send_html(build_page(symbol=symbol, report=report, workflow=workflow, error=note_error))
+                self._send_html(
+                    build_page(symbol=symbol, report=report, workflow=workflow, error=note_error, repository=repository)
+                )
                 return
 
             workflow = ensure_snapshot_workflow(symbol)
@@ -268,6 +290,7 @@ def _make_handler(repository: SQLiteRepository):
                         symbol=symbol,
                         workflow=workflow,
                         error="Snapshot is nog niet importeerbaar.",
+                        repository=repository,
                     )
                 )
                 return
@@ -289,7 +312,14 @@ def _make_handler(repository: SQLiteRepository):
                     errors=validation_error.errors,
                     messages=[],
                 )
-                self._send_html(build_page(symbol=symbol, workflow=workflow, error="Snapshot is nog niet importeerbaar."))
+                self._send_html(
+                    build_page(
+                        symbol=symbol,
+                        workflow=workflow,
+                        error="Snapshot is nog niet importeerbaar.",
+                        repository=repository,
+                    )
+                )
                 return
 
             self.send_response(HTTPStatus.SEE_OTHER)
@@ -340,11 +370,11 @@ def build_page(
         content = (
             f'<div class="notice">{html.escape(notice_text)}</div>'
             + render_report(report)
-            + render_snapshot_workflow(workflow)
+            + render_snapshot_workflow(workflow, repository=repository)
         )
     elif workflow:
         notice = f'<div class="notice">{html.escape(error)}</div>' if error else ""
-        content = notice + render_snapshot_workflow(workflow)
+        content = notice + render_snapshot_workflow(workflow, repository=repository)
     elif error:
         content = f'<div class="notice">{html.escape(error)}</div>'
     elif report:

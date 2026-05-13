@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import html
 from datetime import date
+from urllib.parse import quote_plus
 
 
-def render_snapshot_workflow(workflow) -> str:
+def render_snapshot_workflow(workflow, repository=None) -> str:
     status = "Concept aangemaakt" if workflow.created else "Concept gevonden"
     status_detail = "Klaar voor import" if workflow.can_import else f"{len(workflow.errors)} punten open"
     messages = "".join(f"<li>{html.escape(message)}</li>" for message in workflow.messages)
@@ -23,6 +24,8 @@ def render_snapshot_workflow(workflow) -> str:
         if workflow.can_import
         else "Vul de resterende validatiepunten aan voordat de snapshot definitief kan worden geïmporteerd."
     )
+    return_to = _workflow_return_path(workflow.symbol)
+    provider_review = render_workflow_provider_review(repository, workflow.symbol, return_to)
 
     return f"""
     <div class="workflow-header">
@@ -59,6 +62,11 @@ def render_snapshot_workflow(workflow) -> str:
               <input type="hidden" name="symbol" value="{html.escape(workflow.symbol)}">
               <button type="submit">Haal marktdata op</button>
             </form>
+            <form method="post" action="/status/refresh-providers">
+              <input type="hidden" name="symbol" value="{html.escape(workflow.symbol)}">
+              <input type="hidden" name="return_to" value="{html.escape(return_to)}">
+              <button type="submit">Zoek provider</button>
+            </form>
             <form method="post" action="/workflow/import">
               <input type="hidden" name="symbol" value="{html.escape(workflow.symbol)}">
               <button type="submit"{import_disabled}>Importeer snapshot</button>
@@ -74,7 +82,25 @@ def render_snapshot_workflow(workflow) -> str:
           </ul>
         </section>
       </div>
-    </div>"""
+    </div>
+    {provider_review}"""
+
+
+def render_workflow_provider_review(repository, symbol: str, return_to: str) -> str:
+    if repository is None:
+        return ""
+    from .web_status import render_provider_candidate_review_table
+
+    return f"""
+    <section>
+      <h3>Provider-koppeling</h3>
+      <p class="summary">Gebruik dit ook voor aandelen buiten je portefeuille: zoek provider-kandidaten en vertrouw alleen de notering die bij het bedoelde bedrijf hoort.</p>
+      {render_provider_candidate_review_table(repository, [symbol], return_to=return_to)}
+    </section>"""
+
+
+def _workflow_return_path(symbol: str) -> str:
+    return f"/workflow?symbol={quote_plus(symbol)}"
 
 
 def render_case_note_form(workflow) -> str:

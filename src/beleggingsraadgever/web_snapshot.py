@@ -30,6 +30,7 @@ from .models import (
 )
 from .peer_discovery import refresh_peer_candidates
 from .placeholders import contains_todo, is_placeholder as _is_placeholder
+from .provider_identity import refresh_provider_candidates, trusted_provider_symbols
 from .real_data import DRAFTS_DIR, PROCESSED_DIR
 from .storage import SQLiteRepository
 from .web_params import first_param as _first_param, required_iso_date as _required_iso_date
@@ -60,6 +61,7 @@ def ensure_snapshot_workflow(
     drafts_dir: Path = DRAFTS_DIR,
     auto_collect: bool = False,
     fetch_text=None,
+    repository: Optional[SQLiteRepository] = None,
 ) -> SnapshotWorkflow:
     normalized_symbol = symbol.strip().upper()
     path = drafts_dir / f"{normalized_symbol.lower()}.json"
@@ -69,17 +71,49 @@ def ensure_snapshot_workflow(
         created = True
     messages: list[str] = []
     if auto_collect and (created or not _draft_has_core_figures(path)):
-        collection = collect_snapshot_data(normalized_symbol, path, fetch_text=fetch_text)
-        messages.extend(collection.messages)
-        messages.extend(collection.errors[:1] if not collection.messages else [])
+        provider_gate = _provider_review_gate(repository, normalized_symbol, fetch_text=fetch_text)
+        if provider_gate:
+            messages.append(provider_gate)
+        else:
+            collection = collect_snapshot_data(
+                normalized_symbol,
+                path,
+                fetch_text=fetch_text,
+                preferred_stockanalysis_symbols=_trusted_provider_symbols(repository, normalized_symbol),
+            )
+            messages.extend(collection.messages)
+            messages.extend(collection.errors[:1] if not collection.messages else [])
     errors = validate_snapshot_file(path)
     return SnapshotWorkflow(symbol=normalized_symbol, path=path, created=created, errors=errors, messages=messages)
 
 
-def collect_snapshot_workflow(symbol: str, drafts_dir: Path = DRAFTS_DIR) -> SnapshotWorkflow:
+def collect_snapshot_workflow(
+    symbol: str,
+    drafts_dir: Path = DRAFTS_DIR,
+    repository: Optional[SQLiteRepository] = None,
+    fetch_text=None,
+) -> SnapshotWorkflow:
     normalized_symbol = symbol.strip().upper()
     path = drafts_dir / f"{normalized_symbol.lower()}.json"
-    result = collect_snapshot_data(normalized_symbol, path)
+    provider_gate = _provider_review_gate(repository, normalized_symbol, fetch_text=fetch_text)
+    if provider_gate:
+        created = False
+        if not path.exists():
+            write_snapshot_template(normalized_symbol, path)
+            created = True
+        return SnapshotWorkflow(
+            symbol=normalized_symbol,
+            path=path,
+            created=created,
+            errors=validate_snapshot_file(path),
+            messages=[provider_gate],
+        )
+    result = collect_snapshot_data(
+        normalized_symbol,
+        path,
+        fetch_text=fetch_text,
+        preferred_stockanalysis_symbols=_trusted_provider_symbols(repository, normalized_symbol),
+    )
     messages = list(result.messages)
     if result.updated_fields:
         messages.append("Bijgewerkte velden: " + ", ".join(result.updated_fields))
@@ -92,6 +126,41 @@ def collect_snapshot_workflow(symbol: str, drafts_dir: Path = DRAFTS_DIR) -> Sna
         errors=validate_snapshot_file(result.path),
         messages=messages,
     )
+
+
+def _trusted_provider_symbols(repository: Optional[SQLiteRepository], symbol: str) -> list[str]:
+    if repository is None:
+        return []
+    return trusted_provider_symbols(repository, symbol)
+
+
+def _provider_review_gate(
+    repository: Optional[SQLiteRepository],
+    symbol: str,
+    fetch_text=None,
+) -> str:
+    if repository is None or _explicit_provider_symbol(symbol):
+        return ""
+    if _trusted_provider_symbols(repository, symbol):
+        return ""
+    candidates = repository.provider_candidates_for_symbol(symbol)
+    if not candidates:
+        candidates = refresh_provider_candidates(repository, symbol, fetch_text=fetch_text)
+    active_candidates = [candidate for candidate in candidates if candidate.status != "verworpen"]
+    if not active_candidates or _has_known_exchange_hint(active_candidates):
+        return ""
+    return (
+        f"Provider-kandidaten gevonden voor {symbol}. Vertrouw eerst de juiste providerkoppeling "
+        "en haal daarna marktdata op."
+    )
+
+
+def _explicit_provider_symbol(symbol: str) -> bool:
+    return ":" in symbol or symbol.upper().endswith(".AS")
+
+
+def _has_known_exchange_hint(candidates) -> bool:
+    return any(candidate.source == "known_exchange_hint" and candidate.confidence >= 0.85 for candidate in candidates)
 
 
 def save_case_note_workflow(symbol: str, params: dict, drafts_dir: Path = DRAFTS_DIR) -> tuple[SnapshotWorkflow, Optional[str]]:

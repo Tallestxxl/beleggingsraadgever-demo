@@ -9,10 +9,11 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from beleggingsraadgever.advisor import Advisor
 from beleggingsraadgever.importer import write_snapshot_template
-from beleggingsraadgever.models import CompanyProfile, PeerCandidate, PortfolioAlias, PortfolioClassification
+from beleggingsraadgever.models import CompanyProfile, PeerCandidate, PortfolioAlias, PortfolioClassification, ProviderCandidate
 from beleggingsraadgever.sample_data import seed_demo
 from beleggingsraadgever.storage import SQLiteRepository
 from beleggingsraadgever.backups import list_database_backups
+from beleggingsraadgever.provider_identity import refresh_provider_candidates
 from beleggingsraadgever.web import (
     SnapshotWorkflow,
     archive_imported_snapshot,
@@ -29,6 +30,7 @@ from beleggingsraadgever.web import (
     save_portfolio_profile,
     save_case_note_workflow,
     save_knowledge_document_workflow,
+    update_provider_candidate_status_workflow,
     update_peer_candidate_status_workflow,
 )
 
@@ -82,6 +84,28 @@ class WebTests(unittest.TestCase):
             self.assertNotIn("financial_snapshot.revenue is required.", workflow.errors)
             self.assertNotIn("market_snapshot.close_price is required.", workflow.errors)
             self.assertTrue(any("AMS:APAM" in message for message in workflow.messages))
+
+    def test_untrusted_non_portfolio_provider_candidates_gate_auto_collect(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+
+            workflow = ensure_snapshot_workflow(
+                "PHILIPS",
+                drafts_dir=Path(tmp),
+                auto_collect=True,
+                fetch_text=_fake_provider_lookup_fetch,
+                repository=repo,
+            )
+            html = build_page(symbol="PHILIPS", workflow=workflow, repository=repo)
+
+            self.assertIn("Provider-kandidaten gevonden voor PHILIPS", " ".join(workflow.messages))
+            self.assertIn("financial_snapshot.revenue is required.", workflow.errors)
+            self.assertTrue(repo.provider_candidates_for_symbol("PHILIPS"))
+            self.assertIn("Provider-koppeling", html)
+            self.assertIn("AMS:PHIA", html)
 
     def test_draft_with_core_figures_renders_concept_analysis(self) -> None:
         import tempfile
@@ -826,6 +850,103 @@ Soort,Beleggen,Naam,Status,Aantal,Kostpr. per eenheid,Valuta kostpr. per eenheid
             self.assertIn("providernaam Rand Capital matcht niet met alias RANDSTAD", row.identity_detail)
             self.assertTrue(any("portefeuillealias RANDSTAD" in issue for issue in row.issues))
 
+    def test_provider_candidate_status_update_creates_backup_and_guides_identity(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.replace_provider_candidates(
+                "RAND",
+                [
+                    ProviderCandidate(
+                        symbol="RAND",
+                        provider="StockAnalysis",
+                        provider_symbol="AMS:RAND",
+                        provider_name="Randstad N.V.",
+                        source_url="https://stockanalysis.com/quote/ams/RAND/",
+                        exchange="AMS",
+                        source="known_exchange_hint",
+                        confidence=0.90,
+                        status="voorgesteld",
+                    )
+                ],
+            )
+
+            message = update_provider_candidate_status_workflow(
+                repo,
+                {
+                    "symbol": ["RAND"],
+                    "provider": ["StockAnalysis"],
+                    "provider_symbol": ["AMS:RAND"],
+                    "status": ["vertrouwd"],
+                },
+            )
+            row = build_v1_status_row(repo, "RAND")
+            html = build_status_page(repo)
+            backups = list_database_backups(repo.db_path)
+
+            self.assertIn("Provider-kandidaat AMS:RAND voor RAND is vertrouwd", message)
+            self.assertIn("Backup bewaard", message)
+            self.assertEqual("OK", row.identity_label)
+            self.assertIn("Vertrouwde provider AMS:RAND", row.identity_detail)
+            self.assertIn("Provider-kandidaten beoordelen", html)
+            self.assertEqual(1, len(backups))
+
+    def test_refresh_provider_candidates_uses_portfolio_aliases(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.upsert_portfolio_alias(
+                PortfolioAlias(
+                    portfolio_symbol="RAND",
+                    alias_key="RANDSTAD",
+                    alias_type="broker_name",
+                    raw_value="RANDSTAD",
+                    source="portfolio_csv",
+                )
+            )
+
+            refreshed = refresh_provider_candidates(repo, "RAND", fetch_text=lambda url: "")
+            candidates = repo.provider_candidates_for_symbol("RAND")
+
+            self.assertGreaterEqual(len(refreshed), 1)
+            self.assertTrue(any(candidate.provider_symbol == "AMS:RAND" for candidate in candidates))
+            self.assertTrue(any(candidate.provider_name == "RANDSTAD" for candidate in candidates))
+
+    def test_workflow_shows_provider_review_for_non_portfolio_symbol(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            repo.replace_provider_candidates(
+                "PHILIPS",
+                [
+                    ProviderCandidate(
+                        symbol="PHILIPS",
+                        provider="StockAnalysis",
+                        provider_symbol="AMS:PHIA",
+                        provider_name="Koninklijke Philips N.V.",
+                        source_url="https://stockanalysis.com/quote/ams/PHIA/",
+                        exchange="AMS",
+                        source="stockanalysis_lookup",
+                        confidence=0.86,
+                        status="voorgesteld",
+                    )
+                ],
+            )
+            workflow = ensure_snapshot_workflow("PHILIPS", drafts_dir=Path(tmp))
+
+            html = build_page(symbol="PHILIPS", workflow=workflow, repository=repo)
+
+            self.assertIn("Provider-koppeling", html)
+            self.assertIn("AMS:PHIA", html)
+            self.assertIn("Zoek provider", html)
+            self.assertIn('name="return_to" value="/workflow?symbol=PHILIPS"', html)
+
 
 def _fake_web_stockanalysis_lookup_fetch(url: str) -> str:
     if "symbol-lookup" in url:
@@ -852,6 +973,17 @@ def _fake_web_stockanalysis_lookup_fetch(url: str) -> str:
         <script type="application/ld+json">{"@type":"Corporation","name":"Aperam","legalName":"Aperam S.A.","tickerSymbol":"AMS:APAM"}</script>
         """
     return "Page Not Found - 404"
+
+
+def _fake_provider_lookup_fetch(url: str) -> str:
+    if "symbol-lookup" in url:
+        return (
+            'data:{query:"PHILIPS",count:2,results:['
+            '{s:"@ams/PHIA",n:"Koninklijke Philips N.V.",t:"Stock",p:25.00,m:22000000000},'
+            '{s:"PHG",n:"Koninklijke Philips N.V.",t:"Stock",p:25.00,m:22000000000}'
+            "]}"
+        )
+    return ""
 
 
 if __name__ == "__main__":

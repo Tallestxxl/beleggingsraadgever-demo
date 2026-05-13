@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 from .classification import classify_company
 from .models import DataSource, FinancialSnapshot, MarketSnapshot, Principle
-from .models import CompanyProfile, PortfolioClassification
+from .models import CompanyProfile, PortfolioClassification, ProviderCandidate
 from .peer_discovery import refresh_peer_candidates
 from .placeholders import contains_todo, is_nonempty_string as _is_nonempty_string
 from .placeholders import is_placeholder as _is_placeholder
@@ -324,6 +324,27 @@ def _import_company_profile(repository: SQLiteRepository, symbol: str, data: Dic
             classification_source=str(profile.get("classification_source") or classification.get("source") or ""),
         )
     )
+    provider_symbol = str(profile.get("provider_symbol") or "")
+    provider = str(profile.get("provider") or "")
+    if provider_symbol and provider:
+        repository.replace_provider_candidates(
+            symbol,
+            [
+                ProviderCandidate(
+                    symbol=symbol,
+                    provider=provider,
+                    provider_symbol=provider_symbol,
+                    provider_name=str(profile.get("company_name") or ""),
+                    source_url=str(profile.get("source_url") or ""),
+                    exchange=provider_symbol.split(":", 1)[0].upper() if ":" in provider_symbol else "US",
+                    currency=str(data.get("market_snapshot", {}).get("currency") or ""),
+                    source="imported_snapshot",
+                    confidence=0.95,
+                    reason="Providerkoppeling uit geïmporteerde analysesnapshot.",
+                    status="vertrouwd",
+                )
+            ],
+        )
 
 
 def _classification_value_missing(value: Any) -> bool:

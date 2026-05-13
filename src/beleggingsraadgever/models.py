@@ -294,6 +294,21 @@ class PeerCandidate:
 
 
 @dataclass(frozen=True)
+class ProviderCandidate:
+    symbol: str
+    provider: str
+    provider_symbol: str
+    provider_name: str
+    source_url: str
+    exchange: str = ""
+    currency: str = ""
+    source: str = ""
+    confidence: float = 0.0
+    reason: str = ""
+    status: str = "voorgesteld"
+
+
+@dataclass(frozen=True)
 class AdviceReport:
     symbol: str
     verdict: str
