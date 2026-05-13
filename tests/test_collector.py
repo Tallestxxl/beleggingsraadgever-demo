@@ -225,13 +225,26 @@ def _fake_stockanalysis_etf_fetch(url: str) -> str:
 
 
 def _fake_lookup_with_navigation_links(url: str) -> str:
-    if any(slug in url for slug in ["stocks/compare", "stocks/earnings-calendar", "stocks/industry"]):
+    if any(
+        slug in url
+        for slug in [
+            "stocks/compare",
+            "stocks/earnings-calendar",
+            "stocks/industry",
+            "etf/compare",
+            "etf/provider",
+            "etf/screener",
+        ]
+    ):
         raise AssertionError(f"Navigation link was treated as a ticker: {url}")
     if "symbol-lookup" in url:
         return """
         <a href="/stocks/compare/">Compare</a>
         <a href="/stocks/earnings-calendar/">Earnings Calendar</a>
         <a href="/stocks/industry/">Industry</a>
+        <a href="/etf/compare/">ETF Compare</a>
+        <a href="/etf/provider/">ETF Provider</a>
+        <a href="/etf/screener/">ETF Screener</a>
         """
     return "Page Not Found - 404"
 

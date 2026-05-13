@@ -45,6 +45,8 @@ STOCKANALYSIS_RESERVED_STOCK_SLUGS = {
     "industries",
     "market",
     "markets",
+    "provider",
+    "providers",
     "screener",
     "stocks",
 }
@@ -460,7 +462,7 @@ def _parse_stockanalysis_lookup_symbols(raw_html: str) -> List[str]:
                 symbols.append(slug.upper())
         elif path.startswith("etf/"):
             ticker = path.removeprefix("etf/").strip("/").upper()
-            if _is_ticker_like(ticker):
+            if _is_stockanalysis_stock_slug_like(ticker):
                 symbols.append(f"ETF:{ticker}")
         else:
             _, exchange, ticker = path.strip("/").split("/", 2)
