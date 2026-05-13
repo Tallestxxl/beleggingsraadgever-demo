@@ -751,6 +751,12 @@ def _market_data_sources(market_data: MarketData) -> List[Dict[str, str]]:
     return sources
 
 
+def market_data_sources(market_data: MarketData) -> List[Dict[str, str]]:
+    """Return source rows for collected public market data."""
+
+    return _market_data_sources(market_data)
+
+
 def _merge_data_sources(existing_sources: List[Dict[str, str]], new_sources: List[Dict[str, str]]) -> List[Dict[str, str]]:
     by_field = {source.get("field_name"): source for source in existing_sources if isinstance(source, dict)}
     for source in new_sources:

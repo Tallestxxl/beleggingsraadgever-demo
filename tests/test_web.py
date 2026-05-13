@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import date
 import json
 import os
 import sys
@@ -26,6 +27,7 @@ from beleggingsraadgever.web import (
     build_v1_status_row,
     ensure_snapshot_workflow,
     import_portfolio_csv_workflow,
+    refresh_portfolio_snapshots_workflow,
     save_portfolio_position,
     save_portfolio_profile,
     save_case_note_workflow,
@@ -33,6 +35,7 @@ from beleggingsraadgever.web import (
     update_provider_candidate_status_workflow,
     update_peer_candidate_status_workflow,
 )
+from beleggingsraadgever.portfolio_refresh import portfolio_snapshot_statuses
 
 
 class WebTests(unittest.TestCase):
@@ -788,6 +791,55 @@ Soort,Beleggen,Naam,Status,Aantal,Kostpr. per eenheid,Valuta kostpr. per eenheid
             self.assertIn("EUR 7.273", html)
             self.assertIn("EUR 345", html)
 
+    def test_portfolio_refresh_panel_and_workflow_update_stale_snapshots(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = SQLiteRepository(Path(tmp) / "test.sqlite")
+            repo.init()
+            save_portfolio_position(
+                repo,
+                {
+                    "symbol": ["SHELL"],
+                    "account": ["Hoofdrekening"],
+                    "quantity": ["10"],
+                    "average_cost": ["30"],
+                    "currency": ["EUR"],
+                    "as_of": ["2026-05-01"],
+                },
+            )
+
+            stale_status = portfolio_snapshot_statuses(repo, today=date(2026, 5, 13))[0]
+            initial_html = build_portfolio_page(repo)
+
+            self.assertTrue(stale_status.needs_refresh)
+            self.assertIn("Portefeuilledata verversen", initial_html)
+            self.assertIn("Ververs verouderde data", initial_html)
+            self.assertIn("Koerssnapshot ontbreekt", initial_html)
+            self.assertIn("Fundamentalsnapshot ontbreekt", initial_html)
+
+            message = refresh_portfolio_snapshots_workflow(
+                repo,
+                {"mode": ["stale"]},
+                fetch_text=_fake_shell_snapshot_fetch,
+            )
+            updated_status = portfolio_snapshot_statuses(repo, today=date(2026, 5, 13))[0]
+            market = repo.latest_market_snapshot("SHELL")
+            financial = repo.latest_financial_snapshot("SHELL")
+            portfolio_price = repo.latest_portfolio_price("SHELL")
+            html = build_portfolio_page(repo)
+
+            self.assertIn("1 bijgewerkt", message)
+            self.assertIn("Backup bewaard", message)
+            self.assertFalse(updated_status.needs_refresh)
+            self.assertEqual(market.as_of, "2026-05-13")
+            self.assertEqual(financial.period_end, "2026-03-31")
+            self.assertEqual(financial.revenue, 1_000_000_000)
+            self.assertIsNotNone(portfolio_price)
+            self.assertEqual(portfolio_price.close_price, 32.4)
+            self.assertIn("Alle 1 positie(s) hebben actuele snapshots", html)
+            self.assertIn("Energy", html)
+
     def test_peer_status_update_creates_versioned_backup(self) -> None:
         import tempfile
 
@@ -988,6 +1040,44 @@ def _fake_provider_lookup_fetch(url: str) -> str:
             "]}"
         )
     return ""
+
+
+def _fake_shell_snapshot_fetch(url: str) -> str:
+    if "financials" in url and "quote/ams/SHELL" in url:
+        return 'details:{source:"spg",lastTrailingDate:"Mar 31, 2026"}'
+    if "statistics" in url and "quote/ams/SHELL" in url:
+        return """
+        <script>
+          data:[{type:"data",data:{
+            incomeStatement:{data:[{id:"revenue",title:"Revenue",value:"1.00B",hover:"1,000,000,000"}]},
+            margins:{data:[
+              {id:"grossMargin",title:"Gross Margin",value:"28.00%",hover:"28.000%"},
+              {id:"operatingMargin",title:"Operating Margin",value:"12.00%",hover:"12.000%"},
+              {id:"profitMargin",title:"Profit Margin",value:"8.00%",hover:"8.000%"}
+            ]},
+            cashFlow:{data:[{id:"fcf",title:"Free Cash Flow",value:"120.00M",hover:"120,000,000"}]},
+            balanceSheet:{data:[
+              {id:"debt",title:"Debt",value:"300.00M",hover:"300,000,000"},
+              {id:"totalcash",title:"Cash",value:"150.00M",hover:"150,000,000"}
+            ]},
+            dividends:{data:[{id:"dividendYield",title:"Dividend Yield",value:"4.00%",hover:"4.000%"}]},
+            evRatios:{data:[{id:"evEbitda",title:"EV / EBITDA",value:"6.50",hover:"6.50"}]},
+            valuation:{data:[{id:"pe",title:"PE Ratio",value:"10.20",hover:"10.20"}]}
+          }}]
+        </script>
+        """
+    if "stockanalysis.com/quote/ams/SHELL/" in url:
+        return """
+        <script>
+          data:[
+            {type:"data",data:{info:{quote:{p:32.4,cl:32.4,td:"2026-05-13"},curr:{price:"EUR",main:"EUR"},nameFull:"Shell plc"}}},
+            {type:"data",data:{description:"Shell plc is an integrated energy and oil and gas company.",
+              sector:"Energy", industry:"Oil & Gas Integrated", changes:{price1y:12.0}}}
+          ]
+        </script>
+        <script type="application/ld+json">{"@type":"Corporation","name":"Shell plc","legalName":"Shell plc","tickerSymbol":"AMS:SHELL"}</script>
+        """
+    return "Page Not Found - 404"
 
 
 if __name__ == "__main__":

@@ -26,7 +26,15 @@ from .portfolio import (
 )
 from .peer_discovery import refresh_peer_candidates
 from .portfolio_importer import import_portfolio_csv
+from .portfolio_refresh import (
+    FUNDAMENTAL_STALE_DAYS,
+    MARKET_STALE_DAYS,
+    PortfolioSnapshotStatus,
+    portfolio_snapshot_statuses,
+    refresh_portfolio_snapshots,
+)
 from .storage import SQLiteRepository
+from .web_components import render_status_pill
 from .web_formatting import (
     format_eur,
     format_eur_cents,
@@ -109,6 +117,16 @@ def create_manual_backup_workflow(repository: SQLiteRepository) -> str:
     return _backup_message(repository, "handmatige-backup")
 
 
+def refresh_portfolio_snapshots_workflow(repository: SQLiteRepository, params: dict, fetch_text=None) -> str:
+    mode = _first_param(params, "mode") or "stale"
+    only_stale = mode != "all"
+    result = refresh_portfolio_snapshots(repository, fetch_text=fetch_text, only_stale=only_stale)
+    backup = ""
+    if result.refreshed_count:
+        backup = " " + _backup_message(repository, "portefeuille-snapshots-ververst")
+    return result.summary + backup
+
+
 def _backup_message(repository: SQLiteRepository, reason: str) -> str:
     try:
         backup = create_database_backup(repository.db_path, reason)
@@ -138,6 +156,7 @@ def render_portfolio_dashboard(
     positions = portfolio_position_rows(exposures, position_performance)
     aliases = repository.portfolio_aliases()
     peer_coverage = portfolio_peer_coverage_rows(repository, [row["symbol"] for row in positions])
+    snapshot_statuses = portfolio_snapshot_statuses(repository)
     backups = list_database_backups(repository.db_path)
     securities_value = sum(row["market_value"] for row in positions)
     asset_value = portfolio_assets_net_value(assets)
@@ -198,6 +217,10 @@ def render_portfolio_dashboard(
         </section>
       </div>
       <div>
+        <section>
+          <h3>Portefeuilledata verversen</h3>
+          {render_snapshot_refresh_panel(snapshot_statuses)}
+        </section>
         <section>
           <h3>CSV-import</h3>
           {render_csv_import_form()}
@@ -426,6 +449,64 @@ def render_positions_table(positions: list[dict]) -> str:
             </thead>
             <tbody>{body}</tbody>
           </table>"""
+
+
+def render_snapshot_refresh_panel(rows: list[PortfolioSnapshotStatus]) -> str:
+    if not rows:
+        return '<p class="evidence-meta">Nog geen portefeuilleposities om snapshots voor op te halen.</p>'
+    stale = [row for row in rows if row.needs_refresh]
+    ok_count = len(rows) - len(stale)
+    status_label = "Update nodig" if stale else "Actueel"
+    status_class = "warn" if stale else "ok"
+    summary = (
+        f"{len(stale)} van {len(rows)} positie(s) hebben ontbrekende of verouderde snapshots."
+        if stale
+        else f"Alle {len(rows)} positie(s) hebben actuele snapshots volgens de V1-grenzen."
+    )
+    stale_list = "".join(
+        f"<li>{html.escape(row.symbol)}: {html.escape('; '.join(row.reasons))}</li>"
+        for row in stale[:6]
+    )
+    stale_block = f'<ul class="assumption-list">{stale_list}</ul>' if stale_list else ""
+    details_open = " open" if stale else ""
+    rows_html = "".join(render_snapshot_refresh_row(row) for row in rows)
+    return f"""
+          <p class="summary">{render_status_pill(status_label, status_class)} <span class="status-detail">{html.escape(summary)}</span></p>
+          <p class="evidence-meta">Stale-check: koersdata ouder dan {MARKET_STALE_DAYS} dagen of fundamentals ouder dan {FUNDAMENTAL_STALE_DAYS} dagen vraagt om verversing.</p>
+          {stale_block}
+          <form class="portfolio-form" method="post" action="/portfolio/refresh-snapshots">
+            <input type="hidden" name="mode" value="stale">
+            <button type="submit">Ververs verouderde data</button>
+          </form>
+          <details class="supporting-detail"{details_open}>
+            <summary>Snapshotdekking per positie ({ok_count} actueel)</summary>
+            <table class="data-table">
+              <thead><tr><th>Aandeel</th><th>Status</th><th>Koerssnapshot</th><th>Fundamentals</th><th>Reden</th></tr></thead>
+              <tbody>{rows_html}</tbody>
+            </table>
+          </details>"""
+
+
+def render_snapshot_refresh_row(row: PortfolioSnapshotStatus) -> str:
+    status = "Update nodig" if row.needs_refresh else "OK"
+    status_class = "warn" if row.needs_refresh else "ok"
+    market_label = row.market_as_of or "ontbreekt"
+    if row.market_age_days is not None:
+        market_label += f" ({row.market_age_days} dagen)"
+    financial_label = row.financial_period_end or "ontbreekt"
+    if row.financial_period_type:
+        financial_label = f"{row.financial_period_type} t/m {financial_label}"
+    if row.financial_age_days is not None:
+        financial_label += f" ({row.financial_age_days} dagen)"
+    reason = "; ".join(row.reasons) if row.reasons else "Actueel binnen ingestelde grenzen."
+    return f"""
+        <tr>
+          <td>{html.escape(row.symbol)}</td>
+          <td>{render_status_pill(status, status_class)}</td>
+          <td>{html.escape(market_label)}</td>
+          <td>{html.escape(financial_label)}</td>
+          <td>{html.escape(reason)}</td>
+        </tr>"""
 
 
 def render_aliases_table(aliases) -> str:
