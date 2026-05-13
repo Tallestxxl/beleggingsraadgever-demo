@@ -9,9 +9,19 @@ from .formatting import format_currency
 from .identity import aliases_for_data_sources, candidate_portfolio_symbols, normalize_symbol
 from .indicators import build_score, conviction_from_score, verdict_from_score
 from .knowledge_scope import knowledge_scope_from_tags, scope_matches_analysis
-from .models import AdviceReport, DataSource, EvidenceDiagnostics, FinancialSnapshot, KnowledgeHit, MarketSnapshot, PortfolioFit
+from .models import (
+    AdviceReport,
+    DataSource,
+    EvidenceDiagnostics,
+    FinancialSnapshot,
+    KnowledgeHit,
+    MarketSnapshot,
+    PortfolioFit,
+    SellCandidate,
+)
 from .peers import SnapshotPair, build_peer_analysis
 from .portfolio import (
+    PositionExposure,
     effective_classification,
     exposure_buckets,
     portfolio_assets_net_value,
@@ -204,6 +214,16 @@ class Advisor:
                 lines.extend(f"- Berekening koopruimte: {line}" for line in fit.buy_room_calculation)
             if fit.buy_room_limits:
                 lines.extend(f"- Beperking koopruimte: {line}" for line in fit.buy_room_limits)
+            if fit.sell_candidates:
+                lines.append(f"- Cash vrijmaken nodig: {_format_eur_plain(fit.cash_shortfall)}")
+                for candidate in fit.sell_candidates:
+                    score_text = "n.b." if candidate.score_total is None else f"{candidate.score_total:.1f}/100"
+                    lines.append(
+                        f"- Verkoopkandidaat {candidate.symbol}: circa "
+                        f"{_format_eur_plain(candidate.suggested_sale_value)}; "
+                        f"positie {_format_eur_plain(candidate.position_value)}, score {score_text}; "
+                        f"{candidate.reason}."
+                    )
             lines.extend(f"- {note}" for note in fit.notes)
 
         if report.score.details:
@@ -353,6 +373,20 @@ class Advisor:
             theme_name=classification.theme,
             theme_concentrated=classification.theme != "Onbekend" and theme_weight >= THEME_WARNING_THRESHOLD,
         )
+        sell_candidates = _cash_raising_sell_candidates(
+            repository=self.repository,
+            exposures=exposures,
+            excluded_symbols=set(matched_symbols) | {symbol.upper()},
+            cash_shortfall=(
+                buy_room["cash_shortfall"]
+                if transaction_action in {"kleine_startpositie", "bijkopen_tot_max"}
+                else 0.0
+            ),
+            securities_value=securities_value,
+            max_weight=max_weight,
+            target_sector=classification.sector,
+            target_theme=classification.theme,
+        )
         transaction_rationale = _transaction_rationale(
             transaction_label=TRANSACTION_LABELS[transaction_action],
             score_total=score.total,
@@ -372,7 +406,9 @@ class Advisor:
             available_cash=available_cash,
             max_new_buy_amount=buy_room["max_new_buy_amount"],
             practical_buy_amount=buy_room["practical_buy_amount"],
+            cash_shortfall=buy_room["cash_shortfall"],
             buy_room_limits=buy_room["limits"],
+            sell_candidates=sell_candidates,
         )
 
         return PortfolioFit(
@@ -391,6 +427,7 @@ class Advisor:
             available_cash=available_cash,
             max_new_buy_amount=buy_room["max_new_buy_amount"],
             practical_buy_amount=buy_room["practical_buy_amount"],
+            cash_shortfall=buy_room["cash_shortfall"],
             buy_room_factor=buy_room["buy_room_factor"],
             sector=classification.sector,
             sector_value=sector_value,
@@ -401,6 +438,7 @@ class Advisor:
             buy_room_limits=buy_room["limits"],
             buy_room_calculation=buy_room["calculation"],
             transaction_rationale=transaction_rationale,
+            sell_candidates=sell_candidates,
             notes=notes,
         )
 
@@ -612,7 +650,9 @@ def _transaction_rationale(
     available_cash: Optional[float],
     max_new_buy_amount: float,
     practical_buy_amount: float,
+    cash_shortfall: float,
     buy_room_limits: List[str],
+    sell_candidates: List[SellCandidate],
 ) -> List[str]:
     lines = [
         f"{transaction_label}: totaalscore {score_total:.1f}/100 en risicoscore {risk_score:.1f}/100.",
@@ -659,6 +699,11 @@ def _transaction_rationale(
             f"Praktische koopruimte {_format_eur_plain(practical_buy_amount)} "
             f"binnen maximale koopruimte {_format_eur_plain(max_new_buy_amount)}."
         )
+    if cash_shortfall > 0 and sell_candidates:
+        lines.append(
+            "Cash vrijmaken: eerste kandidaat "
+            f"{sell_candidates[0].symbol} voor circa {_format_eur_plain(sell_candidates[0].suggested_sale_value)}."
+        )
     return lines
 
 
@@ -691,11 +736,14 @@ def _buy_room(
     if theme_concentrated:
         factor *= 0.5
         limits.append(f"Themaconcentratie {theme_name} boven {THEME_WARNING_THRESHOLD:.0%}: 50% rem.")
+    factor_before_cash = factor
     if available_cash is not None and available_cash <= 0:
         factor = 0.0
         limits.append("Geen beschikbare beleggingscash boven de gewenste cashbuffer.")
 
     practical_buy_amount = max_new_buy_amount * factor
+    desired_buy_amount_before_cash = position_room * factor_before_cash
+    cash_shortfall = max(0.0, desired_buy_amount_before_cash - practical_buy_amount)
     calculation = [
         (
             "Positieruimte = effectenvermogen "
@@ -723,14 +771,97 @@ def _buy_room(
         f"Praktische koopruimte = {_format_eur_plain(max_new_buy_amount)} × {factor:.0%} "
         f"= {_format_eur_plain(practical_buy_amount)}."
     )
+    if cash_shortfall > 0:
+        calculation.append(
+            f"Cashtekort voor volledige praktische ruimte: {_format_eur_plain(cash_shortfall)}."
+        )
 
     return {
         "max_new_buy_amount": round(max_new_buy_amount, 2),
         "practical_buy_amount": round(practical_buy_amount, 2),
+        "cash_shortfall": round(cash_shortfall, 2),
         "buy_room_factor": round(factor, 4),
         "limits": limits,
         "calculation": calculation,
     }
+
+
+def _cash_raising_sell_candidates(
+    *,
+    repository: SQLiteRepository,
+    exposures: List[PositionExposure],
+    excluded_symbols: set[str],
+    cash_shortfall: float,
+    securities_value: float,
+    max_weight: float,
+    target_sector: str,
+    target_theme: str,
+) -> List[SellCandidate]:
+    if cash_shortfall <= 0 or securities_value <= 0:
+        return []
+
+    ranked = []
+    for exposure in exposures:
+        symbol = exposure.position.symbol.upper()
+        if symbol in excluded_symbols or exposure.market_value <= 0:
+            continue
+        position_weight = exposure.market_value / securities_value
+        score_total = _local_score_total(repository, symbol)
+        reasons = []
+        priority = score_total if score_total is not None else 65.0
+        if score_total is None:
+            reasons.append("geen actuele analysescore; eerst handmatig controleren")
+        elif score_total < 45:
+            reasons.append(f"zwakke score {score_total:.1f}/100")
+        elif score_total < 60:
+            reasons.append(f"matige score {score_total:.1f}/100")
+        else:
+            reasons.append(f"score {score_total:.1f}/100; alleen verkoopbaar als cash nodig is")
+
+        overweight_amount = max(0.0, exposure.market_value - (securities_value * max_weight))
+        if overweight_amount > 0:
+            priority -= 12
+            reasons.append(f"positiegewicht {position_weight:.1%} boven richtmaximum {max_weight:.1%}")
+        if target_sector != "Onbekend" and exposure.sector == target_sector:
+            priority -= 6
+            reasons.append(f"zelfde sector als nieuwe koop ({target_sector})")
+        if target_theme != "Onbekend" and exposure.theme == target_theme:
+            priority -= 6
+            reasons.append(f"zelfde thema als nieuwe koop ({target_theme})")
+
+        base_sale_cap = exposure.market_value * (0.50 if (score_total is not None and score_total < 60) else 0.25)
+        sale_cap = max(base_sale_cap, overweight_amount) if overweight_amount > 0 else base_sale_cap
+        ranked.append((priority, symbol, exposure, score_total, sale_cap, "; ".join(reasons)))
+
+    remaining = cash_shortfall
+    candidates: List[SellCandidate] = []
+    for _, symbol, exposure, score_total, sale_cap, reason in sorted(ranked, key=lambda item: (item[0], item[1])):
+        if remaining <= 0 or len(candidates) >= 3:
+            break
+        suggested_sale_value = min(remaining, sale_cap, exposure.market_value)
+        if suggested_sale_value <= 0:
+            continue
+        candidates.append(
+            SellCandidate(
+                symbol=symbol,
+                position_value=round(exposure.market_value, 2),
+                position_weight=round(exposure.market_value / securities_value, 4),
+                suggested_sale_value=round(suggested_sale_value, 2),
+                score_total=score_total,
+                reason=reason,
+            )
+        )
+        remaining -= suggested_sale_value
+    return candidates
+
+
+def _local_score_total(repository: SQLiteRepository, symbol: str) -> Optional[float]:
+    try:
+        financial = repository.latest_financial_snapshot(symbol)
+        market = repository.latest_market_snapshot(symbol)
+    except LookupError:
+        return None
+    return build_score(financial, market).total
 
 
 def _score_buy_factor(score_total: float) -> float:
