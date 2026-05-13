@@ -141,16 +141,6 @@ class PortfolioAsset:
 
 
 @dataclass(frozen=True)
-class SellCandidate:
-    symbol: str
-    position_value: float
-    position_weight: float
-    suggested_sale_value: float
-    score_total: Optional[float] = None
-    reason: str = ""
-
-
-@dataclass(frozen=True)
 class PortfolioFit:
     summary: str
     position_value: float
@@ -167,7 +157,6 @@ class PortfolioFit:
     available_cash: Optional[float] = None
     max_new_buy_amount: float = 0.0
     practical_buy_amount: float = 0.0
-    cash_shortfall: float = 0.0
     buy_room_factor: float = 0.0
     sector: str = "Onbekend"
     sector_value: float = 0.0
@@ -178,7 +167,6 @@ class PortfolioFit:
     buy_room_limits: List[str] = field(default_factory=list)
     buy_room_calculation: List[str] = field(default_factory=list)
     transaction_rationale: List[str] = field(default_factory=list)
-    sell_candidates: List[SellCandidate] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
 
 

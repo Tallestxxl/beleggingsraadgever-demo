@@ -53,29 +53,6 @@ def render_report(report: AdviceReport, v1_status: Optional[V1StatusRow] = None)
         transaction_rationale = "".join(
             f"<li>{html.escape(item)}</li>" for item in fit.transaction_rationale
         )
-        sell_candidate_rows = "".join(
-            f"""
-            <tr>
-              <td>{html.escape(candidate.symbol)}</td>
-              <td>{html.escape(format_eur(candidate.position_value))}</td>
-              <td>{html.escape(format_percent(candidate.position_weight))}</td>
-              <td>{html.escape(format_eur(candidate.suggested_sale_value))}</td>
-              <td>{html.escape('n.b.' if candidate.score_total is None else f'{candidate.score_total:.1f}/100')}</td>
-              <td>{html.escape(candidate.reason)}</td>
-            </tr>"""
-            for candidate in fit.sell_candidates
-        )
-        sell_candidates = ""
-        if sell_candidate_rows:
-            sell_candidates = f"""
-          <details class="score-detail">
-            <summary>Toon cash-vrijmaken kandidaten</summary>
-            <p class="evidence-meta">Cashtekort voor volledige praktische koopruimte: {html.escape(format_eur(fit.cash_shortfall))}</p>
-            <table class="data-table">
-              <thead><tr><th>Aandeel</th><th>Positie</th><th>Gewicht</th><th>Voorstel verkoop</th><th>Score</th><th>Reden</th></tr></thead>
-              <tbody>{sell_candidate_rows}</tbody>
-            </table>
-          </details>"""
         classification_rows = ""
         if fit.sector != "Onbekend":
             classification_rows += (
@@ -110,7 +87,6 @@ def render_report(report: AdviceReport, v1_status: Optional[V1StatusRow] = None)
             <ul>{buy_room_calculation}</ul>
             {f'<p class="evidence-meta">Beperkingen</p><ul>{buy_room_limits}</ul>' if buy_room_limits else ''}
           </details>
-          {sell_candidates}
           <ul class="assumption-list">{notes}</ul>
         </section>"""
 
