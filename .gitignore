@@ -17,6 +17,7 @@ data/*.sqlite
 data/*.sqlite-*
 data/*.tmp
 data/local/*
+data/reset-archives/*
 data/raw/*
 data/processed/*
 data/indexes/*
